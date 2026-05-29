@@ -85,7 +85,7 @@ test:
   - helm template test-release $CHART_PATH -f $CHART_PATH/values.yaml -f $CHART_PATH/values-gke.yaml --dry-run
   - echo "Helm lint et dry-run OK"
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # SECURITY TEST - TRIVY IMAGES
@@ -111,7 +111,7 @@ trivy_images_scan:
         $IMAGE
     done
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # SECURITY TEST - TRIVY CONFIG
@@ -123,7 +123,7 @@ trivy_config_scan:
   - helm template trivy-scan $CHART_PATH -f $CHART_PATH/values.yaml -f $CHART_PATH/values-gke.yaml > rendered.yaml
   - trivy config rendered.yaml --severity HIGH,CRITICAL --exit-code 1 --quiet
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # SECURITY TEST - TRIVY SECRETS
@@ -134,7 +134,7 @@ trivy_secret_scan:
   script:
   - trivy fs . --scanners secret --exit-code 1 --no-progress
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # RELEASE - PACKAGE HELM
@@ -149,7 +149,7 @@ release:
     - "*.tgz"
     expire_in: 1 week
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # REVIEW APP
@@ -176,7 +176,7 @@ deploy_review:
   - kubectl get pods -n $NS
   - kubectl get services -n $NS
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # STOP REVIEW
@@ -195,7 +195,7 @@ stop_review:
   - kubectl delete namespace $NS || true
   - echo "Review app supprimée"
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # STAGING
@@ -219,7 +219,7 @@ deploy_staging:
   - kubectl get pods -n staging
   - kubectl get services -n staging
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
 
 # =====================
 # PRODUCTION
@@ -244,4 +244,4 @@ deploy_prod:
   - kubectl get pods -n wordpress
   - kubectl get services -n wordpress
   rules:
-  - if: '$CI_COMMIT_BRANCH == "serge"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
