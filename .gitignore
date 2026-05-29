@@ -1,0 +1,33 @@
+# Secrets et credentials
+sa-key.json
+*.json
+!package.json
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.terraform.lock.hcl
+
+# Helm
+rendered.yaml
+*.tgz
+
+# Vagrant
+**/.vagrant/
+
+# Kubeconfig et credentials sensibles
+infra/kubeadm_kubernetes/configs/config
+infra/kubeadm_kubernetes/velero/credentials-velero
+**/credentials-*
+**/private_key
+
+# Editeur
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

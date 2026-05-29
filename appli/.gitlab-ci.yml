@@ -1,0 +1,247 @@
+stages:
+- test
+- security_test
+- release
+- deploy_review
+- stop_review
+- deploy_staging
+- deploy_prod
+
+# =====================
+# VARIABLES GLOBALES
+# =====================
+variables:
+  CHART_PATH: ./wordpress
+  GCP_WORKLOAD_IDENTITY_PROVIDER: "projects/836366274075/locations/global/workloadIdentityPools/gitlab-pool/providers/gitlab-provider"
+  GCP_SERVICE_ACCOUNT_EMAIL: "gitlab-ci-sa@webservice-devops.iam.gserviceaccount.com"
+
+# =====================
+# IMAGE DE BASE + ID TOKEN GLOBAL
+# =====================
+image:
+  name: alpine/helm:3.16.1
+  entrypoint: [ "" ]
+
+default:
+  id_tokens:
+    GCP_OIDC_TOKEN:
+      aud: "//iam.googleapis.com/projects/836366274075/locations/global/workloadIdentityPools/gitlab-pool/providers/gitlab-provider"
+
+# =====================
+# BEFORE SCRIPT GLOBAL
+# =====================
+before_script:
+- apk add --no-cache curl bash grep coreutils python3
+
+# Installation kubectl
+- curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+- install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+# Installation gcloud
+- curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir=/usr/local
+- export PATH=$PATH:/usr/local/google-cloud-sdk/bin
+
+# Installation du plugin d'auth GKE (requis depuis kubectl 1.26+)
+- gcloud components install gke-gcloud-auth-plugin --quiet
+
+# Installation Trivy
+- curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+- install -m 0755 ./bin/trivy /usr/local/bin/trivy
+
+# Authentification GCP via Workload Identity Federation OIDC
+# GCP_OIDC_TOKEN généré par GitLab via id_tokens (remplace CI_JOB_JWT_V2 déprécié)
+- echo $GCP_OIDC_TOKEN > /tmp/gitlab-oidc-token
+- |
+  printf '{
+    "type": "external_account",
+    "audience": "//iam.googleapis.com/%s",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+    "token_url": "https://sts.googleapis.com/v1/token",
+    "credential_source": {
+      "file": "/tmp/gitlab-oidc-token",
+      "format": { "type": "text" }
+    },
+    "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/%s:generateAccessToken"
+  }' "$GCP_WORKLOAD_IDENTITY_PROVIDER" "$GCP_SERVICE_ACCOUNT_EMAIL" > /tmp/credential-config.json
+- export GOOGLE_APPLICATION_CREDENTIALS=/tmp/credential-config.json
+- gcloud config set project $GCP_PROJECT_ID
+- gcloud config set auth/credential_file_override /tmp/credential-config.json
+- gcloud config set account $GCP_SERVICE_ACCOUNT_EMAIL
+- gcloud auth print-access-token
+- gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_REGION --project $GCP_PROJECT_ID
+
+# Vérification des outils
+- helm version
+- kubectl version --client
+- trivy --version
+
+# =====================
+# TEST HELM
+# =====================
+test:
+  stage: test
+  script:
+  - helm lint $CHART_PATH -f $CHART_PATH/values.yaml -f $CHART_PATH/values-gke.yaml
+  - helm template test-release $CHART_PATH -f $CHART_PATH/values.yaml -f $CHART_PATH/values-gke.yaml --dry-run
+  - echo "Helm lint et dry-run OK"
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# SECURITY TEST - TRIVY IMAGES
+# Bloquant : seules les CVE CRITICAL avec patch dispo bloquent le pipeline
+# =====================
+trivy_images_scan:
+  stage: security_test
+  script:
+  - helm template trivy-scan $CHART_PATH -f $CHART_PATH/values.yaml -f $CHART_PATH/values-gke.yaml > rendered.yaml
+  - |
+    echo "Extraction des images Docker..."
+    IMAGES=$(grep -oE 'image:\s*[^ ]+' rendered.yaml | awk '{print $2}' | sort -u)
+    echo "Images détectées :"
+    echo "$IMAGES"
+  - |
+    for IMAGE in $IMAGES; do
+      echo "Scan de l'image : $IMAGE"
+      trivy image \
+        --severity CRITICAL \
+        --ignore-unfixed \
+        --exit-code 1 \
+        --no-progress \
+        $IMAGE
+    done
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# SECURITY TEST - TRIVY CONFIG
+# Bloquant : scan des manifests K8s rendus (privileged, securityContext, resources, etc.)
+# =====================
+trivy_config_scan:
+  stage: security_test
+  script:
+  - helm template trivy-scan $CHART_PATH -f $CHART_PATH/values.yaml -f $CHART_PATH/values-gke.yaml > rendered.yaml
+  - trivy config rendered.yaml --severity HIGH,CRITICAL --exit-code 1 --quiet
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# SECURITY TEST - TRIVY SECRETS
+# Bloquant : scan du repo entier pour détecter tout secret commité par erreur
+# =====================
+trivy_secret_scan:
+  stage: security_test
+  script:
+  - trivy fs . --scanners secret --exit-code 1 --no-progress
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# RELEASE - PACKAGE HELM
+# =====================
+release:
+  stage: release
+  script:
+  - helm package $CHART_PATH
+  - echo "Chart packagé avec succès"
+  artifacts:
+    paths:
+    - "*.tgz"
+    expire_in: 1 week
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# REVIEW APP
+# =====================
+deploy_review:
+  stage: deploy_review
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    on_stop: stop_review
+  script:
+  - kubectl cluster-info
+  - export NS=review-$CI_COMMIT_REF_SLUG
+  - export RELEASE_NAME=wordpress-review-$CI_COMMIT_REF_SLUG
+  - |
+    helm upgrade --install $RELEASE_NAME $CHART_PATH \
+      -f $CHART_PATH/values.yaml \
+      -f $CHART_PATH/values-gke.yaml \
+      -n $NS --create-namespace \
+      --set wordpress.service.type=ClusterIP \
+      --set cloudsql.password="$WORDPRESS_DB_PASSWORD" \
+      --set env.WORDPRESS_DATABASE_PASSWORD="$WORDPRESS_DB_PASSWORD" \
+      --wait --timeout 5m
+  - echo "Review app déployée dans le namespace $NS"
+  - kubectl get pods -n $NS
+  - kubectl get services -n $NS
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# STOP REVIEW
+# =====================
+stop_review:
+  stage: stop_review
+  when: manual
+  environment:
+    name: review/$CI_COMMIT_REF_NAME
+    action: stop
+  script:
+  - kubectl cluster-info
+  - export NS=review-$CI_COMMIT_REF_SLUG
+  - export RELEASE_NAME=wordpress-review-$CI_COMMIT_REF_SLUG
+  - helm uninstall $RELEASE_NAME -n $NS || true
+  - kubectl delete namespace $NS || true
+  - echo "Review app supprimée"
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# STAGING
+# =====================
+deploy_staging:
+  stage: deploy_staging
+  environment:
+    name: staging
+    url: http://34.52.216.241
+  script:
+  - kubectl cluster-info
+  - |
+    helm upgrade --install wordpress-staging $CHART_PATH \
+      -f $CHART_PATH/values.yaml \
+      -f $CHART_PATH/values-gke.yaml \
+      -n staging --create-namespace \
+      --set cloudsql.password="$WORDPRESS_DB_PASSWORD" \
+      --set env.WORDPRESS_DATABASE_PASSWORD="$WORDPRESS_DB_PASSWORD" \
+      --wait --timeout 5m
+  - echo "Déploiement staging terminé"
+  - kubectl get pods -n staging
+  - kubectl get services -n staging
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'
+
+# =====================
+# PRODUCTION
+# =====================
+deploy_prod:
+  stage: deploy_prod
+  environment:
+    name: production
+    url: http://34.52.216.241
+  when: manual
+  script:
+  - kubectl cluster-info
+  - |
+    helm upgrade --install wordpress $CHART_PATH \
+      -f $CHART_PATH/values.yaml \
+      -f $CHART_PATH/values-gke.yaml \
+      -n wordpress --create-namespace \
+      --set cloudsql.password="$WORDPRESS_DB_PASSWORD" \
+      --set env.WORDPRESS_DATABASE_PASSWORD="$WORDPRESS_DB_PASSWORD" \
+      --wait --timeout 5m
+  - echo "Déploiement production terminé"
+  - kubectl get pods -n wordpress
+  - kubectl get services -n wordpress
+  rules:
+  - if: '$CI_COMMIT_BRANCH == "serge"'

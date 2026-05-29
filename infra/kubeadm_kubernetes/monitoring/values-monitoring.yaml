@@ -1,0 +1,31 @@
+grafana:
+  enabled: true
+  adminPassword: admin123
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.abm-datascientest.ip-ddns.com
+    paths:
+      - /
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.abm-datascientest.ip-ddns.com
+
+prometheus:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - prometheus.abm-datascientest.ip-ddns.com
+    paths:
+      - /
+    tls:
+      - secretName: prometheus-tls
+        hosts:
+          - prometheus.abm-datascientest.ip-ddns.com
+
+alertmanager:
+  enabled: true

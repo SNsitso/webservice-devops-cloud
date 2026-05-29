@@ -1,0 +1,9 @@
+# Secrets — ne jamais commiter
+terraform.tfvars
+*.tfvars
+
+# State local
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl

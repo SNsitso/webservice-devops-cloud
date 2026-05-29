@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "wordpress.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.wordpress.deployment.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "wordpress.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wordpress.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: wordpress
+        image: {{ .Values.wordpress.deployment.image }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop:
+              - ALL
+        ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+        env:
+        - name: WORDPRESS_DATABASE_HOST
+          value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.host }}"{{ else }}{{ template "mysql.fullname" . }}{{ end }}
+        - name: WORDPRESS_DATABASE_PORT_NUMBER
+          value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.port }}"{{ else }}"3306"{{ end }}
+        - name: WORDPRESS_DATABASE_NAME
+          value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.database }}"{{ else }}"wordpress"{{ end }}
+        - name: WORDPRESS_DATABASE_USER
+          value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.username }}"{{ else }}"wordpress"{{ end }}
+        - name: WORDPRESS_DATABASE_PASSWORD
+          value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.password }}"{{ else }}{{ template "mysql.secrets" . }}{{ end }}
+        - name: WORDPRESS_TABLE_PREFIX
+          value: {{ .Values.env.WORDPRESS_TABLE_PREFIX | default "wp_" }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - name: wordpress-data
+          mountPath: /bitnami/wordpress
+        - name: tmp
+          mountPath: /tmp
+        - name: apache-logs
+          mountPath: /opt/bitnami/apache/logs
+        - name: apache-var
+          mountPath: /opt/bitnami/apache/var
+        - name: apache-conf
+          mountPath: /opt/bitnami/apache/conf
+        - name: php-tmp
+          mountPath: /opt/bitnami/php/tmp
+        - name: php-var
+          mountPath: /opt/bitnami/php/var
+      volumes:
+      - name: wordpress-data
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: apache-logs
+        emptyDir: {}
+      - name: apache-var
+        emptyDir: {}
+      - name: apache-conf
+        emptyDir: {}
+      - name: php-tmp
+        emptyDir: {}
+      - name: php-var
+        emptyDir: {}

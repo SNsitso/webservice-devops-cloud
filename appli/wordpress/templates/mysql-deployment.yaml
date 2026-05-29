@@ -1,0 +1,38 @@
+{{- if .Values.mysql.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "mysql.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mysql.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mysql.deployment.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mysql.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mysql.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: {{ template "mysql.name" . }}
+        image: {{ .Values.mysql.deployment.image }}
+        ports:
+        - name: mysql
+          containerPort: 3306
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "mysql.secrets" . }}
+              key: db-password 
+        volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: db-data
+        persistentVolumeClaim:
+          claimName: {{ template "mysql.pvc" . }}
+{{- end }}

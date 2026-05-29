@@ -1,0 +1,12 @@
+# Fichiers générés par Helm
+rendered.yaml
+*.tgz
+
+# Editeur
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

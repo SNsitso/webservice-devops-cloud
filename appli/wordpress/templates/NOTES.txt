@@ -1,0 +1,7 @@
+1. Get the application URL by running these commands:
+{{- if contains "NodePort" .Values.wordpress.service.type }}
+    NOTE: You can get your Nodeport port in other to connect to your Datascientest Wordpress Instance.
+          You can watch the status of by running 'kubectl get service -n {{ .Values.namespace }}'
+{{- else }}
+  echo "Change your service type to Nodeport to open Wordpress in Datascientest web-browser"
+{{- end }}

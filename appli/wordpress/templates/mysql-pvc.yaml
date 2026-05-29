@@ -1,0 +1,17 @@
+{{- if .Values.mysql.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "mysql.pvc" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mysql.labels" . | nindent 4 }}
+spec:
+  storageClassName: {{ .Values.mysql.pvc.storageClassName }}
+  accessModes:
+    - {{ .Values.mysql.pvc.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.mysql.pvc.storage }}
+{{- end }}
+      

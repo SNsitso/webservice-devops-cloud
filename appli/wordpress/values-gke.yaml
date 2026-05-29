@@ -1,0 +1,64 @@
+replicaCount: 2
+
+image:
+  repository: bitnami/wordpress
+  tag: latest
+  pullPolicy: IfNotPresent
+
+wordpress:
+  username: admin
+  email: admin@example.com
+  title: My WordPress Site
+  deployment:
+    image: bitnami/wordpress:latest
+    replicaCount: 2
+  service:
+    type: LoadBalancer
+    port: 80
+    targetPort: 8080
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+  annotations: {}
+
+mysql:
+  enabled: false
+
+cloudsql:
+  enabled: true
+  host: 10.39.128.3
+  port: 3306
+  database: wordpress
+  username: wordpress
+  password: ""
+
+persistence:
+  enabled: true
+  storageClass: standard
+  size: 10Gi
+  mountPath: /bitnami/wordpress
+
+env:
+  WORDPRESS_DATABASE_HOST: "10.39.128.3"
+  WORDPRESS_DATABASE_PORT_NUMBER: "3306"
+  WORDPRESS_DATABASE_NAME: wordpress
+  WORDPRESS_DATABASE_USER: wordpress
+  WORDPRESS_DATABASE_PASSWORD: ""
+  WORDPRESS_TABLE_PREFIX: wp_
+
+ingress:
+  enabled: false
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+affinity: {}
+tolerations: []
+nodeSelector: {}
