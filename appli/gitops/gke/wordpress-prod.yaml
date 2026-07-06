@@ -1,0 +1,34 @@
+# =====================
+# APPLICATION ARGOCD — GKE PRODUCTION
+# Sync MANUELLE (pas de bloc automated) : la promotion en prod
+# se fait par un clic "Sync" dans l'UI ArgoCD ou via la CLI.
+# Remplace le gate "when: manual" du job deploy_prod GitLab.
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wordpress-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://gitlab.com/SNsitso/webservice-devops-cloud.git
+    targetRevision: main
+    path: appli/wordpress
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-gke.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wordpress
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # PAS de bloc automated : la prod reste sur validation humaine.
+    # ArgoCD affichera "OutOfSync" quand main aura avancé — à toi de décider.

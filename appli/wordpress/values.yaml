@@ -27,3 +27,16 @@ ingress:
   tls:
     enabled: false  # mettre true si cert-manager configuré
     secretName: wordpress-tls
+
+# Défauts requis par les templates (surchargés par values-gke.yaml sur GKE)
+image:
+  pullPolicy: IfNotPresent
+
+env:
+  WORDPRESS_TABLE_PREFIX: wp_
+
+cloudsql:
+  enabled: false
+
+persistence:
+  enabled: false

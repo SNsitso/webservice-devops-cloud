@@ -1,0 +1,36 @@
+# =====================
+# APPLICATION ARGOCD — GKE STAGING
+# Sync automatique : chaque merge sur main est déployé en staging
+# (remplace le job deploy_staging du pipeline GitLab)
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wordpress-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://gitlab.com/SNsitso/webservice-devops-cloud.git
+    targetRevision: main
+    path: appli/wordpress
+    helm:
+      # Même logique que le pipeline actuel : base + overrides GKE
+      valueFiles:
+        - values.yaml
+        - values-gke.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: staging
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Étape B4 : commencer en manuel (observation), puis décommenter
+    # automated:
+    #   selfHeal: true
+    #   prune: true

@@ -1,4 +1,6 @@
-replicaCount: 2
+# 1 réplique : le PVC (disque GCP) est en ReadWriteOnce — un seul nœud
+# peut le monter. Passer à 2+ exigerait un stockage ReadWriteMany (Filestore).
+replicaCount: 1
 
 image:
   repository: bitnami/wordpress
@@ -10,8 +12,12 @@ wordpress:
   email: admin@example.com
   title: My WordPress Site
   deployment:
-    image: bitnami/wordpress:latest
-    replicaCount: 2
+    # Épinglé par digest : depuis 2025-08 Bitnami ne publie plus de tags
+    # versionnés gratuits (seul :latest reste). Le digest garantit un
+    # déploiement reproductible. Mise à jour volontaire :
+    #   docker buildx imagetools inspect bitnami/wordpress:latest
+    image: bitnami/wordpress@sha256:39d337946920c27adea7b0495692ab7c11734a2bd32564edb5a415d5ecf137bd
+    replicaCount: 1
   service:
     type: LoadBalancer
     port: 80
@@ -32,7 +38,9 @@ cloudsql:
   port: 3306
   database: wordpress
   username: wordpress
-  password: ""
+  # Secret K8s créé par External Secrets Operator (voir gitops/gke/secrets/)
+  # Le mot de passe n'apparaît plus nulle part dans Git ni dans le CI
+  existingSecret: wordpress-db
 
 persistence:
   enabled: true
@@ -41,11 +49,6 @@ persistence:
   mountPath: /bitnami/wordpress
 
 env:
-  WORDPRESS_DATABASE_HOST: "10.39.128.3"
-  WORDPRESS_DATABASE_PORT_NUMBER: "3306"
-  WORDPRESS_DATABASE_NAME: wordpress
-  WORDPRESS_DATABASE_USER: wordpress
-  WORDPRESS_DATABASE_PASSWORD: ""
   WORDPRESS_TABLE_PREFIX: wp_
 
 ingress:

@@ -1,0 +1,40 @@
+# =====================
+# APPLICATION ARGOCD — CLUSTER LOCAL (kubeadm)
+# Déploie le chart wordpress avec les values locales (MySQL in-cluster)
+# À appliquer une seule fois : kubectl apply -f wordpress-local.yaml
+# Ensuite ArgoCD gère tout depuis Git.
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wordpress-local
+  namespace: argocd
+  # Le finalizer garantit qu'une suppression de l'Application
+  # supprime aussi les ressources déployées (cascade propre)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # SOURCE : où ArgoCD lit l'état désiré
+  source:
+    repoURL: https://gitlab.com/SNsitso/webservice-devops-cloud.git
+    targetRevision: main
+    path: appli/wordpress
+    helm:
+      valueFiles:
+        - values.yaml
+
+  # DESTINATION : le cluster sur lequel ArgoCD tourne lui-même
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wordpress
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Étape A4 : sync MANUELLE (on observe le diff, on valide à la main)
+    # Étape A5 : décommenter le bloc ci-dessous pour activer le GitOps complet
+    # automated:
+    #   selfHeal: true   # dérive manuelle sur le cluster → restauration auto
+    #   prune: true      # ressource retirée de Git → supprimée du cluster

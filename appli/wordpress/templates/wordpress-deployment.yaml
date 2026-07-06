@@ -48,7 +48,17 @@ spec:
         - name: WORDPRESS_DATABASE_USER
           value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.username }}"{{ else }}"wordpress"{{ end }}
         - name: WORDPRESS_DATABASE_PASSWORD
-          value: {{ if .Values.cloudsql.enabled }}"{{ .Values.cloudsql.password }}"{{ else }}{{ template "mysql.secrets" . }}{{ end }}
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.cloudsql.enabled }}
+              # Secret créé par External Secrets Operator (GCP Secret Manager)
+              name: {{ .Values.cloudsql.existingSecret }}
+              key: password
+              {{- else }}
+              # Secret local du chart (remplacé par un SealedSecret à terme)
+              name: {{ template "mysql.secrets" . }}
+              key: db-password
+              {{- end }}
         - name: WORDPRESS_TABLE_PREFIX
           value: {{ .Values.env.WORDPRESS_TABLE_PREFIX | default "wp_" }}
         resources:
@@ -70,7 +80,12 @@ spec:
           mountPath: /opt/bitnami/php/var
       volumes:
       - name: wordpress-data
+        {{- if .Values.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ template "wordpress.fullname" . }}-data
+        {{- else }}
         emptyDir: {}
+        {{- end }}
       - name: tmp
         emptyDir: {}
       - name: apache-logs
