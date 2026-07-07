@@ -1,12 +1,21 @@
 wordpress:
     deployment:
-        image: wordpress:4.8-apache
+        # Image Bitnami (même digest que GKE — parité dev/prod) :
+        # le securityContext du template (runAsUser 1001, port 8080)
+        # est spécifique aux images Bitnami. wordpress:4.8-apache
+        # (root, port 80) crashait avec ces contraintes.
+        image: bitnami/wordpress@sha256:39d337946920c27adea7b0495692ab7c11734a2bd32564edb5a415d5ecf137bd
         replicaCount: 1
     service:
         type: ClusterIP
         port: 80
     
 mysql:
+    # Requis : tous les templates mysql-* sont gardés par cette clé
+    enabled: true
+    # false = le Secret vient d'un SealedSecret géré en GitOps
+    # (l'Application ArgoCD locale le positionne à false)
+    createSecret: true
     deployment:
         image: mysql:5.6
         replicaCount: 1

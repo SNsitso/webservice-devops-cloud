@@ -24,6 +24,11 @@ spec:
     helm:
       valueFiles:
         - values.yaml
+      parameters:
+        # Le Secret MySQL vient du SealedSecret (gitops/local/secrets/),
+        # pas du template du chart (mot de passe "demo" en dur)
+        - name: mysql.createSecret
+          value: "false"
 
   # DESTINATION : le cluster sur lequel ArgoCD tourne lui-même
   destination:
