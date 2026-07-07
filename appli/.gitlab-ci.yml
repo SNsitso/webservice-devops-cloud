@@ -156,6 +156,9 @@ release:
 # =====================
 deploy_review:
   stage: deploy_review
+  # Manuel pendant la transition GitOps : cluster GKE éteint + ArgoCD
+  # reprend les déploiements (jobs deploy_* supprimés à terme)
+  when: manual
   environment:
     name: review/$CI_COMMIT_REF_NAME
     on_stop: stop_review
@@ -202,6 +205,8 @@ stop_review:
 # =====================
 deploy_staging:
   stage: deploy_staging
+  # Manuel pendant la transition GitOps (voir deploy_review)
+  when: manual
   environment:
     name: staging
     url: http://34.52.216.241
