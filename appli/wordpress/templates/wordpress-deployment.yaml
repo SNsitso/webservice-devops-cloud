@@ -61,6 +61,18 @@ spec:
               {{- end }}
         - name: WORDPRESS_TABLE_PREFIX
           value: {{ .Values.env.WORDPRESS_TABLE_PREFIX | default "wp_" }}
+        # Compte admin WordPress (exigé par l'image Bitnami)
+        - name: WORDPRESS_USERNAME
+          value: {{ .Values.wordpress.username | default "admin" | quote }}
+        - name: WORDPRESS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              {{- if .Values.cloudsql.enabled }}
+              name: {{ .Values.cloudsql.existingSecret }}
+              {{- else }}
+              name: {{ template "mysql.secrets" . }}
+              {{- end }}
+              key: wp-admin-password
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         volumeMounts:
