@@ -27,7 +27,18 @@ spec:
           valueFrom:
             secretKeyRef:
               name: {{ template "mysql.secrets" . }}
-              key: db-password 
+              key: db-password
+        # Créés par l'image mysql au premier démarrage (datadir vide) —
+        # ce sont les identifiants que WordPress utilise pour se connecter
+        - name: MYSQL_DATABASE
+          value: wordpress
+        - name: MYSQL_USER
+          value: wordpress
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "mysql.secrets" . }}
+              key: db-password
         volumeMounts:
         - name: db-data
           mountPath: /var/lib/mysql
