@@ -78,18 +78,33 @@ spec:
         volumeMounts:
         - name: wordpress-data
           mountPath: /bitnami/wordpress
-        - name: tmp
+        # Pattern du chart Bitnami officiel : un seul emptyDir découpé en
+        # subPaths pour rendre readOnlyRootFilesystem viable. L'entrypoint
+        # recopie l'application dans app-base-dir au démarrage.
+        - name: empty-dir
           mountPath: /tmp
-        - name: apache-logs
-          mountPath: /opt/bitnami/apache/logs
-        - name: apache-var
-          mountPath: /opt/bitnami/apache/var
-        - name: apache-conf
+          subPath: tmp-dir
+        - name: empty-dir
           mountPath: /opt/bitnami/apache/conf
-        - name: php-tmp
+          subPath: apache-conf-dir
+        - name: empty-dir
+          mountPath: /opt/bitnami/apache/logs
+          subPath: apache-logs-dir
+        - name: empty-dir
+          mountPath: /opt/bitnami/apache/var/run
+          subPath: apache-tmp-dir
+        - name: empty-dir
+          mountPath: /opt/bitnami/php/etc
+          subPath: php-conf-dir
+        - name: empty-dir
           mountPath: /opt/bitnami/php/tmp
-        - name: php-var
+          subPath: php-tmp-dir
+        - name: empty-dir
           mountPath: /opt/bitnami/php/var
+          subPath: php-var-dir
+        - name: empty-dir
+          mountPath: /opt/bitnami/wordpress
+          subPath: app-base-dir
       volumes:
       - name: wordpress-data
         {{- if .Values.persistence.enabled }}
@@ -98,15 +113,5 @@ spec:
         {{- else }}
         emptyDir: {}
         {{- end }}
-      - name: tmp
-        emptyDir: {}
-      - name: apache-logs
-        emptyDir: {}
-      - name: apache-var
-        emptyDir: {}
-      - name: apache-conf
-        emptyDir: {}
-      - name: php-tmp
-        emptyDir: {}
-      - name: php-var
+      - name: empty-dir
         emptyDir: {}
