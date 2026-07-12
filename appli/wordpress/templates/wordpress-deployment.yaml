@@ -22,6 +22,32 @@ spec:
         fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
+      # Pré-remplit les emptyDir avec les fichiers de l'image (pattern du
+      # chart Bitnami officiel) : sans ça, le montage sur /opt/bitnami/wordpress
+      # masque l'application (wp-config.php introuvable au démarrage)
+      initContainers:
+      - name: prepare-base-dir
+        image: {{ .Values.wordpress.deployment.image }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop:
+              - ALL
+        command:
+        - /bin/bash
+        - -ec
+        - |
+          cp -r --preserve=mode /opt/bitnami/wordpress /emptydir/app-base-dir
+          cp -r --preserve=mode /opt/bitnami/apache/logs /emptydir/apache-logs-dir
+          cp -r --preserve=mode /opt/bitnami/php/etc /emptydir/php-conf-dir
+          cp -r --preserve=mode /opt/bitnami/php/var /emptydir/php-var-dir
+        volumeMounts:
+        - name: empty-dir
+          mountPath: /emptydir
       containers:
       - name: wordpress
         image: {{ .Values.wordpress.deployment.image }}
