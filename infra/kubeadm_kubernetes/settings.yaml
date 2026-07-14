@@ -16,7 +16,9 @@ nodes:
   workers:
     count: 2
     cpu: 2
-    memory: 4096
+    # 3 Go au lieu de 4 : suffisant pour ArgoCD + WordPress + MySQL,
+    # et évite la sursouscription RAM de l'hôte (16 Go)
+    memory: 3072
 software:
   box: bento/ubuntu-24.04
   calico: 3.26.0
