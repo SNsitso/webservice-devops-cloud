@@ -38,8 +38,6 @@ spec:
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
-    # Étape A4 : sync MANUELLE (on observe le diff, on valide à la main)
-    # Étape A5 : décommenter le bloc ci-dessous pour activer le GitOps complet
-    # automated:
-    #   selfHeal: true   # dérive manuelle sur le cluster → restauration auto
-    #   prune: true      # ressource retirée de Git → supprimée du cluster
+    automated:
+      selfHeal: true # dérive manuelle sur le cluster → restauration auto
+      prune: true # ressource retirée de Git → supprimée du cluster
