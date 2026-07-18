@@ -58,9 +58,12 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
+  # Requests réduites : les nœuds e2-small (940m/1.3Gi allouables) hébergent
+  # aussi ArgoCD + ESO + système GKE. Requests = réservation du scheduler,
+  # pas la conso réelle — les limits laissent de la marge d'usage.
   requests:
-    cpu: 250m
-    memory: 256Mi
+    cpu: 100m
+    memory: 192Mi
 
 affinity: {}
 tolerations: []
