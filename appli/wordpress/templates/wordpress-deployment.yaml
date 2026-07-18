@@ -131,6 +131,12 @@ spec:
         - name: empty-dir
           mountPath: /opt/bitnami/wordpress
           subPath: app-base-dir
+        {{- if .Values.cloudsql.enabled }}
+        # Voir templates/mysql-client-config.yaml (TLS Cloud SQL)
+        - name: mysql-client-config
+          mountPath: /etc/my.cnf
+          subPath: my.cnf
+        {{- end }}
       volumes:
       - name: wordpress-data
         {{- if .Values.persistence.enabled }}
@@ -141,3 +147,8 @@ spec:
         {{- end }}
       - name: empty-dir
         emptyDir: {}
+      {{- if .Values.cloudsql.enabled }}
+      - name: mysql-client-config
+        configMap:
+          name: {{ template "wordpress.fullname" . }}-mysql-client
+      {{- end }}

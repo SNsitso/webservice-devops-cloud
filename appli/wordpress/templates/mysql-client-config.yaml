@@ -1,0 +1,19 @@
+{{- if .Values.cloudsql.enabled }}
+# Config du client MariaDB embarqué dans l'image Bitnami.
+# Les clients MariaDB >= 11.4 exigent par défaut un TLS VÉRIFIÉ ; le
+# certificat Cloud SQL (CA interne Google, CN = nom d'instance) ne passe
+# pas la vérification → le check de démarrage échouait (ERROR 2026).
+# On garde le TLS mais sans vérification du certificat — le trafic reste
+# sur l'IP privée (VPC peering), jamais exposé à Internet.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "wordpress.fullname" . }}-mysql-client
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+data:
+  my.cnf: |
+    [client]
+    ssl-verify-server-cert=0
+{{- end }}
