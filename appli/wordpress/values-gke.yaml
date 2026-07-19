@@ -34,7 +34,7 @@ mysql:
 
 cloudsql:
   enabled: true
-  host: 10.39.128.3
+  host: 10.39.128.6
   port: 3306
   database: wordpress
   username: wordpress
