@@ -2,71 +2,22 @@ stages:
 - test
 - security_test
 - release
-- deploy_review
-- stop_review
-- deploy_staging
-- deploy_prod
 
 # =====================
-# VARIABLES GLOBALES
+# CI DE VALIDATION UNIQUEMENT — les déploiements sont assurés par ArgoCD
+# (GitOps pull) : voir appli/gitops/. Ce pipeline n'a AUCUN accès aux
+# clusters ni à GCP — il valide et package le chart à chaque push.
 # =====================
 variables:
   # Monorepo : les jobs s'exécutent à la racine du dépôt
   CHART_PATH: appli/wordpress
-  GCP_WORKLOAD_IDENTITY_PROVIDER: "projects/836366274075/locations/global/workloadIdentityPools/gitlab-pool/providers/gitlab-provider"
-  GCP_SERVICE_ACCOUNT_EMAIL: "gitlab-ci-sa@webservice-devops.iam.gserviceaccount.com"
 
-# =====================
-# IMAGE DE BASE (helm inclus)
-# =====================
 image:
   name: alpine/helm:3.16.1
   entrypoint: [ "" ]
 
 # =====================
-# TEMPLATE — AUTH GCP (jobs deploy uniquement)
-# Le CI de validation (test/trivy/release) n'a AUCUN accès au cluster :
-# les déploiements sont repris par ArgoCD (GitOps). Ces jobs deploy
-# sont conservés en manuel pendant la transition et seront supprimés.
-# =====================
-.gcp_deploy:
-  id_tokens:
-    GCP_OIDC_TOKEN:
-      aud: "//iam.googleapis.com/projects/836366274075/locations/global/workloadIdentityPools/gitlab-pool/providers/gitlab-provider"
-  before_script:
-  - apk add --no-cache curl bash python3
-
-  # Installation kubectl
-  - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-  - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-
-  # Installation gcloud + plugin d'auth GKE
-  - curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir=/usr/local
-  - export PATH=$PATH:/usr/local/google-cloud-sdk/bin
-  - gcloud components install gke-gcloud-auth-plugin --quiet
-
-  # Authentification GCP via Workload Identity Federation OIDC
-  - echo $GCP_OIDC_TOKEN > /tmp/gitlab-oidc-token
-  - |
-    printf '{
-      "type": "external_account",
-      "audience": "//iam.googleapis.com/%s",
-      "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-      "token_url": "https://sts.googleapis.com/v1/token",
-      "credential_source": {
-        "file": "/tmp/gitlab-oidc-token",
-        "format": { "type": "text" }
-      },
-      "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/%s:generateAccessToken"
-    }' "$GCP_WORKLOAD_IDENTITY_PROVIDER" "$GCP_SERVICE_ACCOUNT_EMAIL" > /tmp/credential-config.json
-  - export GOOGLE_APPLICATION_CREDENTIALS=/tmp/credential-config.json
-  - gcloud config set project $GCP_PROJECT_ID
-  - gcloud config set auth/credential_file_override /tmp/credential-config.json
-  - gcloud config set account $GCP_SERVICE_ACCOUNT_EMAIL
-  - gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_REGION --project $GCP_PROJECT_ID
-
-# =====================
-# TEMPLATE — TRIVY (jobs security uniquement)
+# TEMPLATE — TRIVY (jobs security)
 # =====================
 .trivy:
   before_script:
@@ -76,7 +27,7 @@ image:
   - trivy --version
 
 # =====================
-# TEST HELM — aucun accès cluster requis
+# TEST HELM — lint + rendu des deux modes (local et GKE)
 # =====================
 test:
   stage: test
@@ -91,7 +42,7 @@ test:
 
 # =====================
 # SECURITY TEST - TRIVY IMAGES
-# Bloquant : seules les CVE CRITICAL avec patch dispo bloquent le pipeline
+# Bloquant : seules les CVE CRITICAL avec correctif bloquent
 # =====================
 trivy_images_scan:
   stage: security_test
@@ -131,7 +82,7 @@ trivy_config_scan:
 
 # =====================
 # SECURITY TEST - TRIVY SECRETS
-# Bloquant : scan du repo entier pour détecter tout secret commité
+# Bloquant : scan du dépôt pour secrets commis par erreur
 # =====================
 trivy_secret_scan:
   stage: security_test
@@ -153,94 +104,5 @@ release:
     paths:
     - "*.tgz"
     expire_in: 1 week
-  rules:
-  - if: '$CI_COMMIT_BRANCH == "main"'
-
-# =====================
-# REVIEW APP (manuel — transition GitOps, repris par ArgoCD)
-# =====================
-deploy_review:
-  stage: deploy_review
-  extends: .gcp_deploy
-  when: manual
-  environment:
-    name: review/$CI_COMMIT_REF_NAME
-    on_stop: stop_review
-  script:
-  - kubectl cluster-info
-  - export NS=review-$CI_COMMIT_REF_SLUG
-  - export RELEASE_NAME=wordpress-review-$CI_COMMIT_REF_SLUG
-  - |
-    helm upgrade --install $RELEASE_NAME $CHART_PATH \
-      -f $CHART_PATH/values.yaml \
-      -f $CHART_PATH/values-gke.yaml \
-      -n $NS --create-namespace \
-      --set wordpress.service.type=ClusterIP \
-      --wait --timeout 5m
-  - echo "Review app déployée dans le namespace $NS"
-  - kubectl get pods -n $NS
-  rules:
-  - if: '$CI_COMMIT_BRANCH == "main"'
-
-# =====================
-# STOP REVIEW
-# =====================
-stop_review:
-  stage: stop_review
-  extends: .gcp_deploy
-  when: manual
-  environment:
-    name: review/$CI_COMMIT_REF_NAME
-    action: stop
-  script:
-  - export NS=review-$CI_COMMIT_REF_SLUG
-  - export RELEASE_NAME=wordpress-review-$CI_COMMIT_REF_SLUG
-  - helm uninstall $RELEASE_NAME -n $NS || true
-  - kubectl delete namespace $NS || true
-  - echo "Review app supprimée"
-  rules:
-  - if: '$CI_COMMIT_BRANCH == "main"'
-
-# =====================
-# STAGING (manuel — transition GitOps, repris par ArgoCD)
-# =====================
-deploy_staging:
-  stage: deploy_staging
-  extends: .gcp_deploy
-  when: manual
-  environment:
-    name: staging
-    url: http://34.52.216.241
-  script:
-  - kubectl cluster-info
-  - |
-    helm upgrade --install wordpress-staging $CHART_PATH \
-      -f $CHART_PATH/values.yaml \
-      -f $CHART_PATH/values-gke.yaml \
-      -n staging --create-namespace \
-      --wait --timeout 5m
-  - kubectl get pods -n staging
-  rules:
-  - if: '$CI_COMMIT_BRANCH == "main"'
-
-# =====================
-# PRODUCTION (manuel — transition GitOps, repris par ArgoCD)
-# =====================
-deploy_prod:
-  stage: deploy_prod
-  extends: .gcp_deploy
-  when: manual
-  environment:
-    name: production
-    url: http://34.52.216.241
-  script:
-  - kubectl cluster-info
-  - |
-    helm upgrade --install wordpress $CHART_PATH \
-      -f $CHART_PATH/values.yaml \
-      -f $CHART_PATH/values-gke.yaml \
-      -n wordpress --create-namespace \
-      --wait --timeout 5m
-  - kubectl get pods -n wordpress
   rules:
   - if: '$CI_COMMIT_BRANCH == "main"'

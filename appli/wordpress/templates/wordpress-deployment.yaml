@@ -7,6 +7,11 @@ metadata:
     {{- include "wordpress.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.wordpress.deployment.replicaCount }}
+  # Recreate : sur un cluster aux ressources serrées, le RollingUpdate par
+  # défaut s'interbloque (le nouveau pod ne peut pas se placer tant que
+  # l'ancien occupe les ressources). Brève interruption acceptée.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "wordpress.selectorLabels" . | nindent 6 }}
