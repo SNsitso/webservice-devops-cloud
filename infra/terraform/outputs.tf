@@ -1,7 +1,5 @@
 # =====================
 # OUTPUTS
-# Valeurs exportées après terraform apply
-# Utilisées par le pipeline GitLab CI pour déployer
 # =====================
 
 output "gke_cluster_name" {
@@ -9,30 +7,24 @@ output "gke_cluster_name" {
   value       = google_container_cluster.gke.name
 }
 
-output "gke_cluster_endpoint" {
-  description = "Endpoint du cluster GKE"
-  value       = google_container_cluster.gke.endpoint
-  sensitive   = true
-}
-
-output "gke_region" {
-  description = "Région du cluster GKE"
-  value       = var.region
+output "gke_zone" {
+  description = "Zone du cluster GKE"
+  value       = var.zone
 }
 
 output "cloudsql_private_ip" {
-  description = "IP privée de l'instance Cloud SQL"
+  description = "IP privée de l'instance Cloud SQL (à reporter dans values-gke.yaml)"
   value       = google_sql_database_instance.mysql.private_ip_address
-}
-
-output "cloudsql_public_ip" {
-  description = "IP publique de l'instance Cloud SQL"
-  value       = google_sql_database_instance.mysql.public_ip_address
 }
 
 output "cloudsql_instance_name" {
   description = "Nom de l'instance Cloud SQL"
   value       = google_sql_database_instance.mysql.name
+}
+
+output "eso_service_account_email" {
+  description = "GSA utilisé par External Secrets Operator (Workload Identity)"
+  value       = google_service_account.eso.email
 }
 
 output "vpc_name" {
