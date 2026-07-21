@@ -1,6 +1,6 @@
-# WordPress on Kubernetes — Cloud & Local Deployment
+# WordPress on Kubernetes — Hybrid GitOps Platform
 
-A production-grade WordPress deployment project covering two deployment modes: a local Kubernetes cluster provisioned with Vagrant and kubeadm, and a cloud-native deployment on Google Kubernetes Engine (GKE) with a fully automated GitLab CI/CD pipeline.
+Production-grade WordPress deployed on two Kubernetes environments — a local kubeadm cluster (Vagrant/VirtualBox) and a GKE Standard cluster on GCP — both managed **in GitOps** with ArgoCD. Infrastructure fully described in Terraform, secrets federated end-to-end (Workload Identity + External Secrets on GKE, Sealed Secrets locally), CI GitLab with three blocking Trivy scans and **no cluster access from the runner**.
 
 ---
 
@@ -9,6 +9,7 @@ A production-grade WordPress deployment project covering two deployment modes: a
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
+- [GitOps Model](#gitops-model)
 - [Project Structure](#project-structure)
 - [Deployment Modes](#deployment-modes)
 - [CI/CD Pipeline](#cicd-pipeline)
@@ -16,63 +17,88 @@ A production-grade WordPress deployment project covering two deployment modes: a
 - [Infrastructure as Code](#infrastructure-as-code)
 - [Prerequisites](#prerequisites)
 
+
 ---
 
 ## Overview
 
-This project demonstrates end-to-end deployment automation of a WordPress application across two distinct environments:
+An end-to-end DevOps project deploying the same application across two symmetric environments:
 
-- **Local**: A multi-node Kubernetes cluster created with Vagrant (VirtualBox) and bootstrapped with kubeadm, designed for offline development and testing without cloud dependencies.
-- **Cloud**: A production-ready deployment on GKE Autopilot with a managed Cloud SQL MySQL 8.4 database, provisioned entirely through Terraform and deployed through a secured GitLab CI/CD pipeline.
+- **Local** — multi-node kubeadm cluster provisioned by Vagrant (control plane + workers), MySQL runs in-cluster, secrets sealed by [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets), zero cloud dependencies.
+- **Cloud** — GKE **Standard** zonal cluster with Spot VMs, managed **Cloud SQL MySQL 8.0** on private IP, secrets stored in **GCP Secret Manager** and federated to pods through **Workload Identity** + [External Secrets Operator](https://external-secrets.io/).
 
-The project applies DevOps principles throughout: infrastructure as code, automated security scanning, environment promotion (review → staging → production), and zero static credentials through OIDC federation.
+Both clusters run **the same Helm chart** with environment-specific values, both are driven by **ArgoCD in pull mode** — no `kubectl` and no `helm upgrade` is ever run manually after the initial bootstrap. A single GitLab CI pipeline validates and packages the chart; it has no credentials to any cluster.
+
+**Guiding principles**: infrastructure as code, zero static credentials, security scanning by default, environment parity, GitOps as the single source of truth.
 
 ---
 
 ## Architecture
 
-### Cloud Architecture (GKE)
+### GitOps flow (both environments)
 
 ```
-GitLab CI/CD (main branch)
-        |
-        | OIDC (Workload Identity Federation)
-        v
-   GCP Project: webservice-devops
-        |
-        |-- GKE Autopilot Cluster (europe-west1)
-        |       |-- Namespace: review-*     (ephemeral per branch)
-        |       |-- Namespace: staging
-        |       |-- Namespace: wordpress    (production)
-        |           |
-        |           |-- WordPress Pod (bitnami/wordpress)
-        |               |-- LoadBalancer Service
-        |               |-- PersistentVolumeClaim (10Gi)
-        |
-        |-- Cloud SQL: MySQL 8.4 (ENTERPRISE, db-g1-small)
-        |       |-- Private IP via VPC peering
-        |       |-- IAM authentication enabled
-        |       |-- Automated backups (daily at 02:00)
-        |
-        |-- GCS Bucket: Terraform remote state
-        |
-        |-- VPC: default network
+                      git push (main)
+                             │
+              ┌──────────────┴──────────────┐
+              ▼                             ▼
+   GitLab CI (validation)        GitLab repository = source of truth
+   ├── helm lint / template            │
+   ├── trivy image scan   (blocking)   │
+   ├── trivy config scan  (blocking)   │
+   ├── trivy secret scan  (blocking)   ▼ pull
+   └── helm package (.tgz)   ┌─────────────────────────┐
+                             │  ArgoCD (in-cluster)     │
+                             │  reconciles every 3 min  │
+                             │  self-heal + prune       │
+                             └────────────┬─────────────┘
+                                          │
+                     ┌────────────────────┴────────────────────┐
+                     ▼                                         ▼
+         Local kubeadm cluster                        GKE Standard cluster
 ```
 
-### Local Architecture (Vagrant + kubeadm)
+### Cloud environment (GKE)
 
 ```
-Host Machine (VirtualBox)
-        |
-        |-- controlplane  (1 VM)
-        |-- node01        (1 VM)
-        |-- node02        (1 VM)
-            |
-            |-- kubeadm bootstrap
-            |-- WordPress Deployment (ClusterIP)
-            |-- MySQL Deployment + PersistentVolume
-            |-- Nginx Ingress Controller
-            |-- MetalLB (LoadBalancer for bare-metal)
+GCP project: webservice-devops
+│
+├── GKE Standard cluster (europe-west1-b)          → Terraform-managed
+│   ├── node pool: 2 × e2-small Spot VMs, 30 GB pd-standard
+│   ├── Workload Identity enabled
+│   ├── namespace argocd            → ArgoCD (5 pods)
+│   ├── namespace external-secrets  → External Secrets Operator
+│   ├── namespace staging           → WordPress (LoadBalancer)
+│   └── namespace wordpress         → WordPress (LoadBalancer)
+│
+├── Cloud SQL MySQL 8.0 (db-f1-micro, HDD)         → Terraform-managed
+│   └── Private IP only via VPC peering (no public exposure)
+│
+├── Secret Manager                                 → Terraform-managed
+│   ├── wordpress-db-password
+│   └── wordpress-admin-password
+│
+├── IAM: GSA eso-sa                                → Terraform-managed
+│   ├── roles/secretmanager.secretAccessor
+│   └── Workload Identity binding to KSA external-secrets/external-secrets
+│
+└── GCS bucket: Terraform remote state
+```
+
+### Local environment (Vagrant + kubeadm)
+
+```
+Host machine (VirtualBox)
+│
+├── master           (control plane)
+├── noeud01          (worker)
+├── noeud02          (worker, optional)
+└── velero / runner  (optional, off by default)
+    │
+    └── Kubernetes 1.31 + Calico + MetalLB + Ingress-Nginx + cert-manager
+        ├── namespace argocd    → ArgoCD (in-cluster)
+        ├── namespace wordpress → WordPress + MySQL (in-cluster)
+        └── namespace kube-system → Sealed Secrets controller
 ```
 
 ---
@@ -81,21 +107,53 @@ Host Machine (VirtualBox)
 
 | Category | Technology |
 |---|---|
-| Container Orchestration | Kubernetes (GKE Autopilot, kubeadm) |
-| Infrastructure as Code | Terraform >= 1.5 (Google provider ~> 5.0) |
-| Package Manager | Helm 3 (custom chart) |
-| Database | Cloud SQL MySQL 8.4 / MySQL 5.6 (local) |
-| CI/CD | GitLab CI/CD (7 stages) |
-| Authentication | OIDC Workload Identity Federation (no static keys) |
-| Security Scanning | Trivy (image, config, secrets) |
-| Application Image | bitnami/wordpress (non-root, port 8080) |
-| Local Provisioning | Vagrant + VirtualBox + kubeadm |
-| State Backend | Google Cloud Storage |
-| Networking | GCP VPC, VPC Peering (Cloud SQL private IP) |
-| Load Balancing | GKE LoadBalancer / MetalLB (local) |
-| Ingress | Nginx Ingress Controller (local) / GKE native (cloud) |
-| Monitoring | Prometheus + Grafana (local cluster) |
-| Backup | Velero (local cluster) |
+| Container orchestration | Kubernetes (GKE Standard, kubeadm 1.31) |
+| **GitOps** | **ArgoCD** — pull-mode, self-healing, prune |
+| Infrastructure as code | Terraform ≥ 1.5 (Google provider ~> 5.0), state on GCS |
+| Application packaging | Helm 3 — single custom chart, two value files |
+| Secrets — cloud | **External Secrets Operator + GCP Secret Manager**, auth via **Workload Identity** |
+| Secrets — local | **Sealed Secrets** (asymmetric encryption, committable to Git) |
+| CI/CD | GitLab CI — **3 stages, 5 jobs** (validation only, no cluster access) |
+| Security scanning | **Trivy** — image CVEs, K8s misconfigurations, committed secrets (all blocking) |
+| CI ↔ GCP auth | OIDC Workload Identity Federation (no static keys) |
+| Application image | `bitnami/wordpress` pinned by digest — non-root, `readOnlyRootFilesystem` |
+| Database — cloud | Cloud SQL MySQL 8.0 (db-f1-micro, HDD, private IP) |
+| Database — local | MySQL in-cluster (Deployment + PVC) |
+| Local provisioning | Vagrant + VirtualBox + shell scripts |
+| Networking | GCP VPC (peering to Cloud SQL) / Calico + MetalLB (local) |
+| Load balancing | GKE LoadBalancer (cloud) / MetalLB (local) |
+| Ingress | GKE Service (cloud) / Ingress-Nginx (local) |
+
+---
+
+## GitOps Model
+
+The pipeline validates. ArgoCD deploys. The two are decoupled:
+
+```
+CI runner                                Cluster
+────────────                             ────────
+- no kubeconfig                          - ArgoCD polls Git every 3 min
+- no cluster credentials                 - reconciles state to match main
+- no gcloud on validation jobs           - self-heal reverts manual drift
+- just Helm + Trivy                      - prune removes what Git removes
+```
+
+**Concrete guarantees**:
+- Any `kubectl edit`/`scale` on the cluster is detected and reverted within ~3 minutes (`selfHeal: true`)
+- Rolling back a bad change is `git revert` + push (~2-3 min end-to-end)
+- Resurrecting a lost cluster: `terraform apply` → install ArgoCD → apply Applications → **the whole platform redeploys itself** from Git
+- The runner has no admin rights — dramatically reduced attack surface
+- The same chart is validated in both **local** and **GKE** modes at every push
+
+**Measured resilience tests** (from the `main` branch history):
+
+| Simulated incident | Recovery |
+|---|---|
+| `kubectl scale --replicas=5` (rogue drift) | Auto-reverted in **~3 min** |
+| `kubectl delete deployment` (deletion) | Recreated in **~20 s** |
+| Change deployed via `git push` | Live in **~90 s** |
+| Rollback via `git revert` | Effective in **~2-3 min** |
 
 ---
 
@@ -103,198 +161,181 @@ Host Machine (VirtualBox)
 
 ```
 wsdevops-Cloud/
-|
-|-- appli/                              # Application layer
-|   |-- .gitlab-ci.yml                 # CI/CD pipeline (7 stages)
-|   |-- .gitlab/
-|   |   |-- agents/                    # GitLab Kubernetes agents config
-|   |       |-- kubernetes-serge/
-|   |       |-- agent-yousf/
-|   |       |-- kubdernetes-mohamed/
-|   |
-|   |-- wordpress/                     # Helm chart (custom)
-|       |-- Chart.yaml
-|       |-- values.yaml                # Default values (local deployment)
-|       |-- values-gke.yaml            # Override values (GKE deployment)
-|       |-- templates/
-|           |-- wordpress-deployment.yaml   # With strict securityContext
-|           |-- wordpress-service.yaml
-|           |-- ingress.yaml
-|           |-- mysql-deployment.yaml       # Conditional (local only)
-|           |-- mysql-service.yaml          # Conditional (local only)
-|           |-- mysql-pvc.yaml              # Conditional (local only)
-|           |-- mysql-secrets.yaml          # Conditional (local only)
-|
-|-- infra/                             # Infrastructure layer
-    |-- terraform/                     # GCP provisioning
-    |   |-- backend.tf                 # GCS remote state
-    |   |-- main.tf                    # GKE cluster + Cloud SQL + VPC
-    |   |-- variables.tf
-    |   |-- outputs.tf
-    |
-    |-- kubeadm_kubernetes/            # Local cluster provisioning
-        |-- Vagrantfile                # Multi-node VM definition
-        |-- settings.yaml              # Cluster configuration
-        |-- scripts/
-        |   |-- common.sh              # Common setup (all nodes)
-        |   |-- master.sh              # Control plane init
-        |   |-- node.sh                # Worker node join
-        |   |-- runner.sh              # GitLab runner setup
-        |   |-- LoadBalancer.sh        # MetalLB setup
-        |   |-- dashboard.sh           # Kubernetes dashboard
-        |-- cert-manager/              # TLS certificate automation
-        |-- monitoring/                # Prometheus + Grafana values
-        |-- velero/                    # Backup configuration
+│
+├── appli/                              # Application layer
+│   ├── .gitlab-ci.yml                  # CI: validation only (test + 3 Trivy + release)
+│   │
+│   ├── wordpress/                      # Custom Helm chart
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml                 # Defaults (local: MySQL in-cluster, Ingress-Nginx)
+│   │   ├── values-gke.yaml             # Overrides (GKE: Cloud SQL, LoadBalancer, ESO)
+│   │   └── templates/
+│   │       ├── wordpress-deployment.yaml   # non-root, RO rootfs, initContainer prepare-base-dir
+│   │       ├── wordpress-service.yaml
+│   │       ├── wordpress-pvc.yaml
+│   │       ├── mysql-client-config.yaml    # (GKE) my.cnf mounted to fix TLS-verify quirk
+│   │       ├── mysql-*.yaml                # (local only) Deployment/Service/PVC/Secret
+│   │       └── ingress.yaml
+│   │
+│   └── gitops/                         # ArgoCD Applications (declarative deploy config)
+│       ├── local/
+│       │   ├── wordpress-local.yaml    # auto-sync + selfHeal + prune
+│       │   ├── secrets-app.yaml
+│       │   └── secrets/mysql-sealed-secret.yaml  # committable, encrypted
+│       └── gke/
+│           ├── wordpress-staging.yaml  # auto-sync
+│           ├── wordpress-prod.yaml     # manual sync (human gate for prod)
+│           ├── secrets-app.yaml
+│           └── secrets/
+│               ├── cluster-secret-store.yaml     # GCP Secret Manager backend
+│               └── external-secret-*.yaml        # references (values fetched by ESO)
+│
+└── infra/                              # Infrastructure layer
+    ├── terraform/                      # 10 resources under Terraform (imported from console)
+    │   ├── main.tf                     # cluster + node pool + Cloud SQL + IAM + Secret Manager
+    │   ├── variables.tf
+    │   ├── outputs.tf
+    │   └── backend.tf                  # state on GCS bucket webservice-devops-terraform-state
+    │
+    └── kubeadm_kubernetes/             # Local cluster provisioning
+        ├── Vagrantfile
+        ├── settings.yaml
+        ├── scripts/                    # common, master, node, LoadBalancer (MetalLB)
+        ├── cert-manager/               # TLS automation (local)
+        ├── monitoring/                 # Prometheus + Grafana (planned)
+        └── velero/                     # Backup (planned)
 ```
 
 ---
 
 ## Deployment Modes
 
-### Local Deployment (Vagrant + kubeadm)
+### Local (Vagrant + kubeadm + Sealed Secrets)
 
-Prerequisites: VirtualBox, Vagrant
+Prerequisites: VirtualBox, Vagrant, ≥ 8 GB free RAM on the host.
 
 ```bash
+# 1. Provision the cluster (master + one worker is enough)
 cd infra/kubeadm_kubernetes
-vagrant up
+vagrant up master noeud01
+
+# 2. Install the platform (one-time bootstrap, from a shell with kubectl configured)
+helm repo add argo https://argoproj.github.io/argo-helm
+helm install argocd argo/argo-cd -n argocd --create-namespace \
+  --set dex.enabled=false --set notifications.enabled=false
+
+helm repo add sealed-secrets https://bitnami.github.io/sealed-secrets
+helm install sealed-secrets sealed-secrets/sealed-secrets -n kube-system \
+  --set fullnameOverride=sealed-secrets-controller
+
+# 3. Point ArgoCD at Git (once) and register the two Applications
+kubectl apply -f appli/gitops/local/wordpress-local.yaml \
+              -f appli/gitops/local/secrets-app.yaml
+
+# From then on: every git push is deployed automatically.
 ```
 
-This provisions a control plane and two worker nodes, bootstraps the cluster with kubeadm, and installs MetalLB, Nginx Ingress, and cert-manager automatically through provisioning scripts.
+### Cloud (GKE Standard + Cloud SQL + ESO)
 
-Deploy WordPress locally:
-
-```bash
-helm upgrade --install wordpress appli/wordpress \
-  -f appli/wordpress/values.yaml
-```
-
-### Cloud Deployment (GKE + Terraform)
-
-Prerequisites: Terraform >= 1.5, gcloud CLI, kubectl, Helm 3
-
-**Step 1 — Provision infrastructure**
+Prerequisites: Terraform ≥ 1.5, `gcloud`, `kubectl`, `helm`.
 
 ```bash
+# 1. Provision GCP resources (or import existing ones — code is aligned with reality)
 cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # fill in db_password
 terraform init
-terraform plan
-terraform apply
+terraform apply             # cluster, node pool, Cloud SQL, IAM, Secret Manager
+
+# 2. Populate secrets in Secret Manager (values never touch Git)
+gcloud secrets versions add wordpress-db-password    --data-file=/path/to/db.txt
+gcloud secrets versions add wordpress-admin-password --data-file=/path/to/wp.txt
+
+# 3. Bootstrap the platform (one-time)
+gcloud container clusters get-credentials cluster-1 --zone europe-west1-b
+helm install argocd argo/argo-cd -n argocd --create-namespace \
+  --set dex.enabled=false --set notifications.enabled=false
+helm install external-secrets external-secrets/external-secrets -n external-secrets \
+  --create-namespace \
+  --set "serviceAccount.annotations.iam\.gke\.io/gcp-service-account=eso-sa@<PROJECT>.iam.gserviceaccount.com"
+
+kubectl apply -f appli/gitops/gke/wordpress-staging.yaml \
+              -f appli/gitops/gke/wordpress-prod.yaml \
+              -f appli/gitops/gke/secrets-app.yaml
 ```
-
-This creates:
-- GKE Autopilot cluster in `europe-west1`
-- Cloud SQL MySQL 8.4 instance with private VPC connectivity
-- Required IAM bindings for Workload Identity Federation
-
-**Step 2 — Configure kubectl**
-
-```bash
-gcloud container clusters get-credentials wordpress-autopilot-cluster-1 \
-  --region europe-west1 --project webservice-devops
-```
-
-**Step 3 — Deploy via pipeline**
-
-Push to `main`. The GitLab CI/CD pipeline handles linting, security scanning, packaging, and deployment automatically.
-
-**Tear down infrastructure**
-
-```bash
-terraform destroy
-```
-
-All resources are created with `deletion_protection = false` in Terraform to allow clean destruction.
 
 ---
 
 ## CI/CD Pipeline
 
-The pipeline is defined in `appli/.gitlab-ci.yml` and triggers on every push to `main`.
+Defined in `appli/.gitlab-ci.yml`. **Validation only** — no cluster access.
 
 ```
-main branch push
-      |
-      v
-  [test]              helm lint + helm template dry-run
-      |
-      v
-  [security_test]     trivy image scan     (CRITICAL CVEs with fix, blocking)
-                      trivy config scan    (HIGH/CRITICAL K8s misconfigs, blocking)
-                      trivy secret scan    (secrets in repository, blocking)
-      |
-      v
-  [release]           helm package -> artifact (.tgz)
-      |
-      v
-  [deploy_review]     helm install -> namespace review-* (ephemeral)
-      |
-      v
-  [stop_review]       manual — helm uninstall + namespace deletion
-      |
-      v
-  [deploy_staging]    helm upgrade --install -> namespace staging
-      |
-      v
-  [deploy_prod]       manual gate — helm upgrade --install -> namespace wordpress
+git push main
+      │
+      ▼
+[test]              helm lint + helm template (local and GKE modes)
+      │
+      ▼
+[security_test]     trivy image scan     (CRITICAL CVEs with fix — blocking)
+                    trivy config scan    (HIGH/CRITICAL K8s misconfigs — blocking)
+                    trivy secret scan    (committed secrets — blocking)
+      │
+      ▼
+[release]           helm package → .tgz artifact
 ```
 
-Authentication to GCP uses **OIDC Workload Identity Federation** — no service account keys are stored in GitLab. The CI job exchanges a short-lived GitLab ID token for a GCP access token at runtime.
+**Deployments are performed by ArgoCD, not by the pipeline.** The historical `deploy_review / staging / prod` jobs were removed after the GitOps migration (−145 lines of CI).
 
-**Required CI/CD variables** (Settings > CI/CD > Variables):
+Duration: ~3-5 minutes per push. Zero credentials to any cluster.
 
-| Variable | Description |
-|---|---|
-| `GCP_PROJECT_ID` | GCP project ID |
-| `GKE_CLUSTER_NAME` | GKE cluster name |
-| `GKE_REGION` | GCP region |
-| `WORDPRESS_DB_PASSWORD` | Database password (masked) |
-
-**Required GitLab setting**: CI/CD configuration file path must be set to `appli/.gitlab-ci.yml`.
+**Required setting** in GitLab: **Settings → CI/CD → General pipelines → CI/CD configuration file** = `appli/.gitlab-ci.yml`.
 
 ---
 
 ## Security
 
-### Kubernetes Pod Security
+### Pod-level
 
-The WordPress deployment enforces strict security constraints:
+- Non-root (UID 1001), `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`
+- All Linux capabilities dropped, `seccompProfile: RuntimeDefault`
+- Writes only through explicit `emptyDir` subPaths (Apache logs, PHP tmp, app base dir populated by initContainer)
+- `bitnami/wordpress` pinned by SHA digest (reproducible builds, no floating `latest`)
 
-- Runs as non-root user (UID 1001, GID 1001) — bitnami/wordpress compliance
-- `readOnlyRootFilesystem: true` — filesystem is immutable at runtime
-- `allowPrivilegeEscalation: false`
-- All Linux capabilities dropped (`drop: [ALL]`)
-- `seccompProfile: RuntimeDefault`
-- Write access only through explicitly declared `emptyDir` volumes (tmp, logs, apache config, php temp)
+### Secrets
 
-### CI/CD Security
+- **Nothing sensitive in Git** — ever. The repository stores only references (`ExternalSecret`) or ciphertext (`SealedSecret`).
+- **Zero static credentials end-to-end**:
+  - CI → GCP: OIDC Workload Identity Federation
+  - Pod → GCP APIs: Workload Identity binding (KSA ↔ GSA)
+  - `terraform.tfvars` is gitignored (holds the DB password locally only)
 
-- No static GCP credentials — OIDC token exchange only
-- Database password injected at deploy time via `--set`, never stored in values files
-- Three mandatory Trivy scans block the pipeline on any finding:
-  - Image scan: known CVEs with available fixes
-  - Config scan: Kubernetes security misconfigurations
-  - Secret scan: accidentally committed credentials
+### CI
+
+- Three blocking Trivy scans on every push — no way to merge a critical CVE, a K8s misconfiguration, or a leaked secret
+- The runner has no cluster or GCP credentials for the validation jobs
 
 ### Infrastructure
 
-- Cloud SQL connected via private IP (VPC peering) — not exposed on the public internet
-- `terraform.tfvars` and state files excluded from version control
-- Service account keys excluded from version control
+- Cloud SQL exposed on **private IP only** (no public interface, VPC peering)
+- GKE control plane in the REGULAR release channel
+- Shielded nodes: integrity monitoring + secure boot
+- Deletion protection managed by Terraform (off in this lab; would be on in real production)
 
 ---
 
 ## Infrastructure as Code
 
-All GCP resources are managed by Terraform:
+All GCP resources are described in Terraform — including the pieces originally created via the console, which have been **imported** into the state:
 
-| Resource | Configuration |
+| Resource | Notes |
 |---|---|
-| GKE Autopilot Cluster | `europe-west1`, REGULAR release channel, public nodes |
-| Cloud SQL MySQL 8.4 | ENTERPRISE, `db-g1-small`, automated backups, IAM auth, `utf8mb4` |
-| VPC | References existing GCP default network via data source |
-| Terraform state | Remote backend on GCS (`webservice-devops-terraform-state`) |
+| GKE Standard cluster + node pool | zonal, Workload Identity, Spot VMs, `ignore_changes` on Google-managed cosmetic blocks |
+| Cloud SQL MySQL 8.0 instance + database + user | private IP, no backups (lab), `activation_policy` parameterised |
+| Secret Manager (2 secret containers, values managed out-of-band) | |
+| GSA `eso-sa` + project IAM binding + Workload Identity binding | Least-privilege: only `roles/secretmanager.secretAccessor` |
+
+`terraform plan` runs clean: **no destroy, no add**. Code is the map of production.
+
+The state lives in GCS bucket `webservice-devops-terraform-state`, encrypted at rest. Locking prevents concurrent applies.
 
 ---
 
@@ -302,321 +343,9 @@ All GCP resources are managed by Terraform:
 
 | Tool | Version |
 |---|---|
-| Terraform | >= 1.5.0 |
-| gcloud CLI | Latest |
-| kubectl | >= 1.26 |
-| Helm | >= 3.0 |
-| Vagrant | >= 2.3 (local deployment only) |
-| VirtualBox | >= 6.1 (local deployment only) |
-
----
-
----
-
-# WordPress sur Kubernetes — Deploiement Cloud et Local
-
-Un projet de deploiement WordPress en conditions de production, couvrant deux modes de deploiement : un cluster Kubernetes local provisionne avec Vagrant et kubeadm, et un deploiement cloud-native sur Google Kubernetes Engine (GKE) avec un pipeline GitLab CI/CD entierement automatise.
-
----
-
-## Table des matieres
-
-- [Vue d'ensemble](#vue-densemble)
-- [Architecture](#architecture-1)
-- [Stack technique](#stack-technique)
-- [Structure du projet](#structure-du-projet)
-- [Modes de deploiement](#modes-de-deploiement)
-- [Pipeline CI/CD](#pipeline-cicd)
-- [Securite](#securite)
-- [Infrastructure as Code](#infrastructure-as-code-1)
-- [Prerequis](#prerequis)
-
----
-
-## Vue d'ensemble
-
-Ce projet illustre l'automatisation complete du deploiement d'une application WordPress dans deux environnements distincts :
-
-- **Local** : Un cluster Kubernetes multi-noeuds cree avec Vagrant (VirtualBox) et initialise avec kubeadm, concu pour le developpement et les tests sans dependance au cloud.
-- **Cloud** : Un deploiement en conditions de production sur GKE Autopilot avec une base de donnees Cloud SQL MySQL 8.4 geree, provisionnee entierement par Terraform et deployee via un pipeline GitLab CI/CD securise.
-
-Le projet applique les principes DevOps de bout en bout : infrastructure as code, analyse de securite automatisee, promotion par environnements (review → staging → production), et zero credential statique grace a la federation OIDC.
-
----
-
-## Architecture
-
-### Architecture Cloud (GKE)
-
-```
-GitLab CI/CD (branche main)
-        |
-        | OIDC (Workload Identity Federation)
-        v
-   Projet GCP : webservice-devops
-        |
-        |-- Cluster GKE Autopilot (europe-west1)
-        |       |-- Namespace : review-*     (ephemere par branche)
-        |       |-- Namespace : staging
-        |       |-- Namespace : wordpress    (production)
-        |           |
-        |           |-- Pod WordPress (bitnami/wordpress)
-        |               |-- Service LoadBalancer
-        |               |-- PersistentVolumeClaim (10Gi)
-        |
-        |-- Cloud SQL : MySQL 8.4 (ENTERPRISE, db-g1-small)
-        |       |-- IP privee via VPC peering
-        |       |-- Authentification IAM activee
-        |       |-- Sauvegardes automatiques (quotidiennes a 02:00)
-        |
-        |-- Bucket GCS : etat Terraform distant
-        |
-        |-- VPC : reseau default GCP
-```
-
-### Architecture Locale (Vagrant + kubeadm)
-
-```
-Machine hote (VirtualBox)
-        |
-        |-- controlplane  (1 VM)
-        |-- node01        (1 VM)
-        |-- node02        (1 VM)
-            |
-            |-- Initialisation kubeadm
-            |-- Deploiement WordPress (ClusterIP)
-            |-- Deploiement MySQL + PersistentVolume
-            |-- Nginx Ingress Controller
-            |-- MetalLB (LoadBalancer bare-metal)
-```
-
----
-
-## Stack technique
-
-| Categorie | Technologie |
-|---|---|
-| Orchestration de conteneurs | Kubernetes (GKE Autopilot, kubeadm) |
-| Infrastructure as Code | Terraform >= 1.5 (Google provider ~> 5.0) |
-| Gestionnaire de paquets K8s | Helm 3 (chart personnalise) |
-| Base de donnees | Cloud SQL MySQL 8.4 / MySQL 5.6 (local) |
-| CI/CD | GitLab CI/CD (7 stages) |
-| Authentification | OIDC Workload Identity Federation (sans cle statique) |
-| Analyse de securite | Trivy (images, config, secrets) |
-| Image applicative | bitnami/wordpress (non-root, port 8080) |
-| Provisionnement local | Vagrant + VirtualBox + kubeadm |
-| Backend d'etat | Google Cloud Storage |
-| Reseau | GCP VPC, VPC Peering (IP privee Cloud SQL) |
-| Load Balancing | GKE LoadBalancer / MetalLB (local) |
-| Ingress | Nginx Ingress Controller (local) / GKE natif (cloud) |
-| Monitoring | Prometheus + Grafana (cluster local) |
-| Sauvegarde | Velero (cluster local) |
-
----
-
-## Structure du projet
-
-```
-wsdevops-Cloud/
-|
-|-- appli/                              # Couche applicative
-|   |-- .gitlab-ci.yml                 # Pipeline CI/CD (7 stages)
-|   |-- .gitlab/
-|   |   |-- agents/                    # Configuration agents GitLab Kubernetes
-|   |
-|   |-- wordpress/                     # Chart Helm (personnalise)
-|       |-- Chart.yaml
-|       |-- values.yaml                # Valeurs par defaut (deploiement local)
-|       |-- values-gke.yaml            # Valeurs de surcharge (deploiement GKE)
-|       |-- templates/
-|           |-- wordpress-deployment.yaml   # Avec securityContext strict
-|           |-- wordpress-service.yaml
-|           |-- ingress.yaml
-|           |-- mysql-deployment.yaml       # Conditionnel (local uniquement)
-|           |-- mysql-service.yaml          # Conditionnel (local uniquement)
-|           |-- mysql-pvc.yaml              # Conditionnel (local uniquement)
-|           |-- mysql-secrets.yaml          # Conditionnel (local uniquement)
-|
-|-- infra/                             # Couche infrastructure
-    |-- terraform/                     # Provisionnement GCP
-    |   |-- backend.tf                 # Etat distant GCS
-    |   |-- main.tf                    # Cluster GKE + Cloud SQL + VPC
-    |   |-- variables.tf
-    |   |-- outputs.tf
-    |
-    |-- kubeadm_kubernetes/            # Provisionnement cluster local
-        |-- Vagrantfile                # Definition des VMs multi-noeuds
-        |-- settings.yaml              # Configuration du cluster
-        |-- scripts/
-        |   |-- common.sh              # Installation commune (tous les noeuds)
-        |   |-- master.sh              # Initialisation du plan de controle
-        |   |-- node.sh                # Jonction des noeuds worker
-        |   |-- runner.sh              # Installation GitLab runner
-        |   |-- LoadBalancer.sh        # Installation MetalLB
-        |   |-- dashboard.sh           # Dashboard Kubernetes
-        |-- cert-manager/              # Automatisation TLS
-        |-- monitoring/                # Valeurs Prometheus + Grafana
-        |-- velero/                    # Configuration des sauvegardes
-```
-
----
-
-## Modes de deploiement
-
-### Deploiement local (Vagrant + kubeadm)
-
-Prerequis : VirtualBox, Vagrant
-
-```bash
-cd infra/kubeadm_kubernetes
-vagrant up
-```
-
-Cette commande provisionne un plan de controle et deux noeuds worker, initialise le cluster avec kubeadm, et installe automatiquement MetalLB, Nginx Ingress et cert-manager via les scripts de provisionnement.
-
-Deployer WordPress en local :
-
-```bash
-helm upgrade --install wordpress appli/wordpress \
-  -f appli/wordpress/values.yaml
-```
-
-### Deploiement Cloud (GKE + Terraform)
-
-Prerequis : Terraform >= 1.5, gcloud CLI, kubectl, Helm 3
-
-**Etape 1 — Provisionner l'infrastructure**
-
-```bash
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # renseigner db_password
-terraform init
-terraform plan
-terraform apply
-```
-
-Cette commande cree :
-- Cluster GKE Autopilot dans `europe-west1`
-- Instance Cloud SQL MySQL 8.4 avec connexion privee via VPC
-- Liaisons IAM pour la federation Workload Identity
-
-**Etape 2 — Configurer kubectl**
-
-```bash
-gcloud container clusters get-credentials wordpress-autopilot-cluster-1 \
-  --region europe-west1 --project webservice-devops
-```
-
-**Etape 3 — Deployer via le pipeline**
-
-Pousser sur `main`. Le pipeline GitLab CI/CD gere automatiquement le lint, les analyses de securite, le packaging et le deploiement.
-
-**Detruire l'infrastructure**
-
-```bash
-terraform destroy
-```
-
-Toutes les ressources sont creees avec `deletion_protection = false` dans Terraform pour permettre une destruction propre.
-
----
-
-## Pipeline CI/CD
-
-Le pipeline est defini dans `appli/.gitlab-ci.yml` et se declenche a chaque push sur `main`.
-
-```
-Push branche main
-      |
-      v
-  [test]              helm lint + helm template dry-run
-      |
-      v
-  [security_test]     trivy image scan     (CVE CRITICAL avec correctif, bloquant)
-                      trivy config scan    (mauvaises configs K8s HIGH/CRITICAL, bloquant)
-                      trivy secret scan    (secrets dans le depot, bloquant)
-      |
-      v
-  [release]           helm package -> artefact (.tgz)
-      |
-      v
-  [deploy_review]     helm install -> namespace review-* (ephemere)
-      |
-      v
-  [stop_review]       manuel — helm uninstall + suppression du namespace
-      |
-      v
-  [deploy_staging]    helm upgrade --install -> namespace staging
-      |
-      v
-  [deploy_prod]       validation manuelle — helm upgrade --install -> namespace wordpress
-```
-
-L'authentification GCP utilise la **federation OIDC Workload Identity** — aucune cle de compte de service n'est stockee dans GitLab. Le job CI echange un token GitLab de courte duree contre un token d'acces GCP au moment de l'execution.
-
-**Variables CI/CD requises** (Settings > CI/CD > Variables) :
-
-| Variable | Description |
-|---|---|
-| `GCP_PROJECT_ID` | ID du projet GCP |
-| `GKE_CLUSTER_NAME` | Nom du cluster GKE |
-| `GKE_REGION` | Region GCP |
-| `WORDPRESS_DB_PASSWORD` | Mot de passe de la base (masque) |
-
-**Parametre GitLab requis** : le chemin du fichier de configuration CI/CD doit etre defini a `appli/.gitlab-ci.yml`.
-
----
-
-## Securite
-
-### Securite des pods Kubernetes
-
-Le deploiement WordPress applique des contraintes de securite strictes :
-
-- Execution en utilisateur non-root (UID 1001, GID 1001) — conformite bitnami/wordpress
-- `readOnlyRootFilesystem: true` — systeme de fichiers immuable a l'execution
-- `allowPrivilegeEscalation: false`
-- Toutes les capacites Linux supprimees (`drop: [ALL]`)
-- `seccompProfile: RuntimeDefault`
-- Acces en ecriture uniquement via des volumes `emptyDir` declares explicitement (tmp, logs, config apache, temp php)
-
-### Securite CI/CD
-
-- Aucun credential GCP statique — echange de token OIDC uniquement
-- Mot de passe de la base injecte au moment du deploiement via `--set`, jamais stocke dans les fichiers values
-- Trois analyses Trivy obligatoires bloquent le pipeline a la moindre detection :
-  - Scan d'images : CVE connus avec correctif disponible
-  - Scan de config : mauvaises configurations de securite Kubernetes
-  - Scan de secrets : credentials commites par erreur
-
-### Infrastructure
-
-- Cloud SQL connecte via IP privee (VPC peering) — non expose sur Internet
-- `terraform.tfvars` et fichiers d'etat exclus du controle de version
-- Cles de compte de service exclues du controle de version
-
----
-
-## Infrastructure as Code
-
-Toutes les ressources GCP sont gerees par Terraform :
-
-| Ressource | Configuration |
-|---|---|
-| Cluster GKE Autopilot | `europe-west1`, canal de mise a jour REGULAR, noeuds publics |
-| Cloud SQL MySQL 8.4 | ENTERPRISE, `db-g1-small`, sauvegardes automatiques, auth IAM, `utf8mb4` |
-| VPC | Reference le reseau GCP default existant via data source |
-| Etat Terraform | Backend distant sur GCS (`webservice-devops-terraform-state`) |
-
----
-
-## Prerequis
-
-| Outil | Version |
-|---|---|
-| Terraform | >= 1.5.0 |
-| gcloud CLI | Derniere version |
-| kubectl | >= 1.26 |
-| Helm | >= 3.0 |
-| Vagrant | >= 2.3 (deploiement local uniquement) |
-| VirtualBox | >= 6.1 (deploiement local uniquement) |
+| Terraform | ≥ 1.5.0 |
+| gcloud CLI | latest |
+| kubectl | ≥ 1.28 |
+| Helm | ≥ 3.16 |
+| Vagrant | ≥ 2.3 (local only) |
+| VirtualBox | ≥ 6.1 (local only) |
