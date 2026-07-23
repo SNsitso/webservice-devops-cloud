@@ -1,5 +1,13 @@
 # WordPress on Kubernetes — Hybrid GitOps Platform
 
+![Kubernetes](https://img.shields.io/badge/Kubernetes-1.31-326CE5?logo=kubernetes&logoColor=white)
+![ArgoCD](https://img.shields.io/badge/ArgoCD-v3.4-EF7B4D?logo=argo&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-≥1.5-7B42BC?logo=terraform&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-3.16-0F1689?logo=helm&logoColor=white)
+![Google Cloud](https://img.shields.io/badge/Google_Cloud-GKE_Standard-4285F4?logo=googlecloud&logoColor=white)
+![GitLab CI](https://img.shields.io/badge/GitLab_CI-Trivy_×3-FC6D26?logo=gitlab&logoColor=white)
+![Security](https://img.shields.io/badge/Secrets-Workload_Identity_%2B_ESO-2EA043)
+
 Production-grade WordPress deployed on two Kubernetes environments — a local kubeadm cluster (Vagrant/VirtualBox) and a GKE Standard cluster on GCP — both managed **in GitOps** with ArgoCD. Infrastructure fully described in Terraform, secrets federated end-to-end (Workload Identity + External Secrets on GKE, Sealed Secrets locally), CI GitLab with three blocking Trivy scans and **no cluster access from the runner**.
 
 ---
