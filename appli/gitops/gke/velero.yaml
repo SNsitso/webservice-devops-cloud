@@ -1,0 +1,103 @@
+# =====================
+# APPLICATION ARGOCD — VELERO (backup/restore Kubernetes) — GKE
+# Backend : bucket GCS webservice-devops-velero-backups
+# Auth : Workload Identity (KSA velero/velero ↔ GSA velero-sa) — ZÉRO clé statique
+# Snapshots PVC : File System Backup (node-agent DaemonSet, ex-Restic)
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: velero
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://vmware-tanzu.github.io/helm-charts
+    chart: velero
+    targetRevision: 8.5.0
+    helm:
+      values: |
+        # Plugin GCP (pas AWS — on est sur GKE avec bucket GCS)
+        initContainers:
+          - name: velero-plugin-for-gcp
+            image: velero/velero-plugin-for-gcp:v1.11.0
+            volumeMounts:
+              - mountPath: /target
+                name: plugins
+
+        # PAS de secret : auth par Workload Identity via annotation du KSA
+        credentials:
+          useSecret: false
+
+        # KSA velero/velero annoté → peut agir comme le GSA velero-sa
+        # (binding IAM déjà créé en amont : roles/iam.workloadIdentityUser)
+        serviceAccount:
+          server:
+            create: true
+            name: velero
+            annotations:
+              iam.gke.io/gcp-service-account: velero-sa@webservice-devops.iam.gserviceaccount.com
+
+        configuration:
+          backupStorageLocation:
+            - name: default
+              provider: gcp
+              bucket: webservice-devops-velero-backups
+              default: true
+
+          # Pas de snapshots CSI natifs — on utilise File System Backup à la place
+          volumeSnapshotLocation: []
+
+          # FSB : sauvegarde le CONTENU des PVC (pas juste les manifests)
+          # — indispensable pour restaurer WordPress avec sa base de données.
+          defaultVolumesToFsBackup: true
+
+        # DaemonSet node-agent (nécessaire pour FSB)
+        deployNodeAgent: true
+        nodeAgent:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+
+        # Métriques Prometheus (visible dans Grafana)
+        metrics:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+            additionalLabels: {}
+
+        # Schedule optionnel — à activer après un premier backup manuel réussi
+        # schedules:
+        #   wordpress-daily:
+        #     schedule: "0 2 * * *"
+        #     template:
+        #       includedNamespaces: [wordpress]
+        #       ttl: 168h
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: velero
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      selfHeal: true
+      prune: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s

@@ -1,0 +1,128 @@
+# =====================
+# APPLICATION ARGOCD — MONITORING (kube-prometheus-stack) — GKE
+# Prometheus + Alertmanager + Grafana + node-exporter + kube-state-metrics
+# Grafana admin password lu depuis Secret Manager via ESO (ExternalSecret
+# grafana-admin), cohérent avec le pattern secretless du projet.
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 65.5.1
+    helm:
+      values: |
+        # ---- Grafana ----
+        grafana:
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          service:
+            type: ClusterIP           # exposé via port-forward (cohérent avec ArgoCD)
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          persistence:
+            enabled: false            # dashboards recréés au restart — pas de PVC pour la démo
+          defaultDashboardsTimezone: browser
+
+        # ---- Prometheus ----
+        prometheus:
+          service:
+            type: ClusterIP
+          prometheusSpec:
+            retention: 3d
+            retentionSize: 2GB
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 3Gi
+
+        # ---- Alertmanager ----
+        alertmanager:
+          alertmanagerSpec:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 32Mi
+              limits:
+                memory: 64Mi
+
+        # Composants control-plane inaccessibles depuis les workers en GKE managé
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeProxy:
+          enabled: false
+
+        prometheusOperator:
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+
+        nodeExporter:
+          enabled: true
+        kubeStateMetrics:
+          enabled: true
+        kube-state-metrics:
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      # kube-prometheus-stack embarque des CRDs > 262 Ko : le classic apply
+      # échoue ("annotations too long"), ServerSideApply les gère nativement.
+      - ServerSideApply=true
+    automated:
+      selfHeal: true
+      prune: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+
+  ignoreDifferences:
+    # Le webhook admission des CRDs prometheus-operator rotate son CA
+    # automatiquement — à ignorer pour éviter un OutOfSync permanent.
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
