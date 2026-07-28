@@ -20,6 +20,11 @@ spec:
     targetRevision: 8.5.0
     helm:
       values: |
+        # Désactive le hook post-install "velero-upgrade-crds" qui utilise
+        # bitnami/kubectl:1.35 — image supprimée par Broadcom depuis 08/2025.
+        # Les CRDs sont installées correctement par l'apply initial du chart.
+        upgradeCRDs: false
+
         # Plugin GCP (pas AWS — on est sur GKE avec bucket GCS)
         initContainers:
           - name: velero-plugin-for-gcp
