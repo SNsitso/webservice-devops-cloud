@@ -44,7 +44,7 @@ resource "google_container_cluster" "gke" {
 }
 
 # ----------------------
-# Node pool : e2-small Spot (coût ~÷3, préemptions absorbées par le GitOps)
+# Node pool : e2-medium Spot (coût ~÷3, préemptions absorbées par le GitOps)
 # node_count est une variable : la "pause" du cluster = node_count 0
 # ----------------------
 resource "google_container_node_pool" "default_pool" {
@@ -58,7 +58,7 @@ resource "google_container_node_pool" "default_pool" {
   node_config {
     machine_type = var.node_machine_type
     spot         = true
-    disk_size_gb = 30
+    disk_size_gb = var.node_disk_size_gb
     disk_type    = "pd-standard"
     image_type   = "COS_CONTAINERD"
 

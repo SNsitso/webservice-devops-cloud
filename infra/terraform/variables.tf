@@ -35,15 +35,21 @@ variable "cluster_name" {
 }
 
 variable "node_machine_type" {
-  description = "Type de machine des nœuds"
+  description = "Type de machine des nœuds (e2-medium : 4 Go RAM, requis pour la stack observabilité + Velero — e2-small saturait à 89% avec WordPress seul)"
   type        = string
-  default     = "e2-small"
+  default     = "e2-medium"
+}
+
+variable "node_disk_size_gb" {
+  description = "Taille du disque de boot des nœuds (50 Go : 30 Go saturait avec les images Prometheus/Grafana → nœud en ReadOnlyFileSystem)"
+  type        = number
+  default     = 50
 }
 
 variable "node_count" {
-  description = "Nombre de nœuds du pool (0 = pause du cluster, 2 = normal)"
+  description = "Nombre de nœuds du pool (0 = pause du cluster, 3 = normal — le CPU allouable est saturé par les pods système GKE à 2 nœuds, voir CULTURE.md)"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 # ---------- Cloud SQL ----------

@@ -86,6 +86,16 @@ spec:
               memory: 64Mi
             limits:
               memory: 128Mi
+          # Le sidecar config-reloader (injecté dans les pods Prometheus et
+          # Alertmanager) demande 200m CPU par défaut — 1/5 d'un nœud e2 pour
+          # recharger un fichier de config ! 20m suffisent largement.
+          prometheusConfigReloader:
+            resources:
+              requests:
+                cpu: 20m
+                memory: 32Mi
+              limits:
+                memory: 64Mi
 
         nodeExporter:
           enabled: true
