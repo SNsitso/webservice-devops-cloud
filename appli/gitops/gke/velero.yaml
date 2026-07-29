@@ -52,6 +52,13 @@ spec:
               provider: gcp
               bucket: webservice-devops-velero-backups
               default: true
+              # OBLIGATOIRE en mode Workload Identity (credentials.useSecret=false) :
+              # le plugin GCP exige le GSA explicitement pour signer les URLs
+              # (erreur sinon : "serviceAccount is expected to be provided...").
+              # Prérequis IAM : le GSA doit pouvoir signer en son propre nom
+              # (roles/iam.serviceAccountTokenCreator sur lui-même).
+              config:
+                serviceAccount: velero-sa@webservice-devops.iam.gserviceaccount.com
 
           # Pas de snapshots CSI natifs — on utilise File System Backup à la place
           volumeSnapshotLocation: []
@@ -61,11 +68,15 @@ spec:
           defaultVolumesToFsBackup: true
 
         # DaemonSet node-agent (nécessaire pour FSB)
+        # requests CPU à 10m : le DaemonSet doit rentrer sur CHAQUE nœud, or
+        # les nœuds e2 n'ont que ~940m allouables, presque tout réservé par
+        # les pods système GKE. C'est une réservation, pas un plafond — le
+        # backup burste au-delà sans problème (pas de limit CPU).
         deployNodeAgent: true
         nodeAgent:
           resources:
             requests:
-              cpu: 50m
+              cpu: 10m
               memory: 128Mi
             limits:
               memory: 256Mi
