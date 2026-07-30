@@ -16,7 +16,7 @@ wordpress:
     # versionnés gratuits (seul :latest reste). Le digest garantit un
     # déploiement reproductible. Mise à jour volontaire :
     #   docker buildx imagetools inspect bitnami/wordpress:latest
-    image: bitnami/wordpress@sha256:39d337946920c27adea7b0495692ab7c11734a2bd32564edb5a415d5ecf137bd
+    image: bitnami/wordpress@sha256:4a70606af740f23f5cd8ac86b13e66adffca022526953c68de1307418a1186a8
     replicaCount: 1
   service:
     type: LoadBalancer
