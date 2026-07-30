@@ -95,13 +95,19 @@ spec:
             enabled: true
             additionalLabels: {}
 
-        # Schedule optionnel — à activer après un premier backup manuel réussi
-        # schedules:
-        #   wordpress-daily:
-        #     schedule: "0 2 * * *"
-        #     template:
-        #       includedNamespaces: [wordpress]
-        #       ttl: 168h
+        # Backup quotidien des 2 environnements WordPress (activé le 2026-07-31
+        # après validation manuelle du cycle backup + restore complet).
+        # NOTE pauses coûts : si le cluster est éteint à 2h du matin, Velero
+        # rattrape le backup manqué au réveil (le contrôleur déclenche tout
+        # backup "dû" au redémarrage) — aucune journée n'est perdue.
+        schedules:
+          wordpress-daily:
+            schedule: "0 2 * * *"
+            template:
+              includedNamespaces:
+                - wordpress
+                - staging
+              ttl: 168h   # 7 jours de rétention (kopia déduplique — coût minime)
 
   destination:
     server: https://kubernetes.default.svc
