@@ -7,8 +7,11 @@
 ![Google Cloud](https://img.shields.io/badge/Google_Cloud-GKE_Standard-4285F4?logo=googlecloud&logoColor=white)
 ![GitLab CI](https://img.shields.io/badge/GitLab_CI-Trivy_×3-FC6D26?logo=gitlab&logoColor=white)
 ![Security](https://img.shields.io/badge/Secrets-Workload_Identity_%2B_ESO-2EA043)
+![Prometheus](https://img.shields.io/badge/Prometheus-kube--prometheus--stack-E6522C?logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-dashboards-F46800?logo=grafana&logoColor=white)
+![Velero](https://img.shields.io/badge/Velero-daily_backups_→_GCS-42B3E5)
 
-Production-grade WordPress deployed on two Kubernetes environments — a local kubeadm cluster (Vagrant/VirtualBox) and a GKE Standard cluster on GCP — both managed **in GitOps** with ArgoCD. Infrastructure fully described in Terraform, secrets federated end-to-end (Workload Identity + External Secrets on GKE, Sealed Secrets locally), CI GitLab with three blocking Trivy scans and **no cluster access from the runner**.
+Production-grade WordPress deployed on two Kubernetes environments — a local kubeadm cluster (Vagrant/VirtualBox) and a GKE Standard cluster on GCP — both managed **in GitOps** with ArgoCD. Infrastructure fully described in Terraform, secrets federated end-to-end (Workload Identity + External Secrets on GKE, Sealed Secrets locally), CI GitLab with three blocking Trivy scans and **no cluster access from the runner**. Full observability with **Prometheus + Grafana**, and **daily Velero backups** to GCS with a **proven restore path**.
 
 ---
 
@@ -22,6 +25,7 @@ Production-grade WordPress deployed on two Kubernetes environments — a local k
 - [Deployment Modes](#deployment-modes)
 - [CI/CD Pipeline](#cicd-pipeline)
 - [Security](#security)
+- [Observability & Backup](#observability--backup)
 - [Infrastructure as Code](#infrastructure-as-code)
 - [Prerequisites](#prerequisites)
 
@@ -72,23 +76,33 @@ Both clusters run **the same Helm chart** with environment-specific values, both
 GCP project: webservice-devops
 │
 ├── GKE Standard cluster (europe-west1-b)          → Terraform-managed
-│   ├── node pool: 2 × e2-small Spot VMs, 30 GB pd-standard
+│   ├── node pool: 3 × e2-medium Spot VMs, 50 GB pd-standard
 │   ├── Workload Identity enabled
 │   ├── namespace argocd            → ArgoCD (5 pods)
 │   ├── namespace external-secrets  → External Secrets Operator
 │   ├── namespace staging           → WordPress (LoadBalancer)
-│   └── namespace wordpress         → WordPress (LoadBalancer)
+│   ├── namespace wordpress         → WordPress (LoadBalancer)
+│   ├── namespace monitoring        → kube-prometheus-stack (Prometheus, Grafana, Alertmanager)
+│   └── namespace velero            → Velero + node-agent DaemonSet (File System Backup)
 │
 ├── Cloud SQL MySQL 8.0 (db-f1-micro, HDD)         → Terraform-managed
 │   └── Private IP only via VPC peering (no public exposure)
 │
 ├── Secret Manager                                 → Terraform-managed
 │   ├── wordpress-db-password
-│   └── wordpress-admin-password
+│   ├── wordpress-admin-password
+│   └── grafana-admin-password
 │
 ├── IAM: GSA eso-sa                                → Terraform-managed
 │   ├── roles/secretmanager.secretAccessor
 │   └── Workload Identity binding to KSA external-secrets/external-secrets
+│
+├── IAM: GSA velero-sa                             → Terraform-managed
+│   ├── roles/storage.objectAdmin on the backup bucket (least privilege)
+│   ├── Workload Identity binding to KSA velero/velero
+│   └── roles/iam.serviceAccountTokenCreator on itself (signBlob, keyless URL signing)
+│
+├── GCS bucket: Velero backups                     → Terraform-managed
 │
 └── GCS bucket: Terraform remote state
 ```
@@ -124,6 +138,8 @@ Host machine (VirtualBox)
 | CI/CD | GitLab CI — **3 stages, 5 jobs** (validation only, no cluster access) |
 | Security scanning | **Trivy** — image CVEs, K8s misconfigurations, committed secrets (all blocking) |
 | CI ↔ GCP auth | OIDC Workload Identity Federation (no static keys) |
+| **Observability** | **kube-prometheus-stack** (Prometheus, Grafana, Alertmanager) — deployed as an ArgoCD Application, Grafana admin password federated via ESO |
+| **Backup / DR** | **Velero** + GCP plugin — File System Backup (kopia), daily schedule, GCS bucket, keyless auth via Workload Identity, **restore proven end-to-end** |
 | Application image | `bitnami/wordpress` pinned by digest — non-root, `readOnlyRootFilesystem` |
 | Database — cloud | Cloud SQL MySQL 8.0 (db-f1-micro, HDD, private IP) |
 | Database — local | MySQL in-cluster (Deployment + PVC) |
@@ -156,12 +172,14 @@ CI runner                                Cluster
 
 **Measured resilience tests** (from the `main` branch history):
 
-| Simulated incident | Recovery |
+| Incident | Recovery |
 |---|---|
 | `kubectl scale --replicas=5` (rogue drift) | Auto-reverted in **~3 min** |
 | `kubectl delete deployment` (deletion) | Recreated in **~20 s** |
 | Change deployed via `git push` | Live in **~90 s** |
 | Rollback via `git revert` | Effective in **~2-3 min** |
+| **Critical CVE published for the pinned image** (real event, caught by the blocking Trivy scan) | Patched on both environments with a **one-line digest bump** — no cluster access needed |
+| Full namespace loss (simulated) | **Velero restore in ~2 min**, site verified live |
 
 ---
 
@@ -193,13 +211,15 @@ wsdevops-Cloud/
 │       └── gke/
 │           ├── wordpress-staging.yaml  # auto-sync
 │           ├── wordpress-prod.yaml     # manual sync (human gate for prod)
+│           ├── monitoring.yaml         # kube-prometheus-stack (ServerSideApply for >262KB CRDs)
+│           ├── velero.yaml             # Velero + GCP plugin, FSB, daily schedule
 │           ├── secrets-app.yaml
 │           └── secrets/
 │               ├── cluster-secret-store.yaml     # GCP Secret Manager backend
 │               └── external-secret-*.yaml        # references (values fetched by ESO)
 │
 └── infra/                              # Infrastructure layer
-    ├── terraform/                      # 10 resources under Terraform (imported from console)
+    ├── terraform/                      # 16 resources under Terraform (imported from console/gcloud)
     │   ├── main.tf                     # cluster + node pool + Cloud SQL + IAM + Secret Manager
     │   ├── variables.tf
     │   ├── outputs.tf
@@ -210,8 +230,8 @@ wsdevops-Cloud/
         ├── settings.yaml
         ├── scripts/                    # common, master, node, LoadBalancer (MetalLB)
         ├── cert-manager/               # TLS automation (local)
-        ├── monitoring/                 # Prometheus + Grafana (planned)
-        └── velero/                     # Backup (planned)
+        ├── monitoring/                 # legacy values (observability runs on GKE — host RAM constraint)
+        └── velero/                     # legacy values (backups run on GKE)
 ```
 
 ---
@@ -330,6 +350,26 @@ Duration: ~3-5 minutes per push. Zero credentials to any cluster.
 
 ---
 
+## Observability & Backup
+
+Both stacks are **ArgoCD Applications** like everything else — declared in Git, self-healing, rebuilt automatically when the cluster wakes up.
+
+### Monitoring (kube-prometheus-stack)
+
+- **Prometheus** (3-day retention, PVC-backed), **Grafana** (~25 pre-provisioned Kubernetes dashboards), **Alertmanager**, node-exporter, kube-state-metrics
+- Grafana admin password: Secret Manager → External Secrets Operator → Kubernetes Secret — the same secretless pattern as the application
+- `ServerSideApply=true` (the Prometheus CRDs exceed the 256 KB annotation limit of classic apply); GKE-managed control-plane scrape targets disabled
+- Chart defaults audited and right-sized for the cluster (e.g. the config-reloader sidecar requests 200m CPU by default — trimmed to 20m)
+
+### Backup & disaster recovery (Velero)
+
+- **Daily schedule** (`0 2 * * *`) covering both WordPress namespaces, 7-day retention — missed runs are caught up when the cluster wakes from a cost pause
+- **File System Backup** (kopia) instead of CSI snapshots: backups are **portable across clusters** (the GCS bucket could restore onto any Kubernetes, not just GKE) and deduplicated
+- **Keyless**: the Velero pod impersonates GSA `velero-sa` via Workload Identity; the BSL declares `config.serviceAccount` and the GSA holds `serviceAccountTokenCreator` on itself for signed URLs — no JSON key anywhere
+- **Restore proven end-to-end**: a staging backup was restored into a fresh namespace (`namespaceMapping`), PVC content re-injected by the node-agent, and the full WordPress site verified live before cleanup
+
+---
+
 ## Infrastructure as Code
 
 All GCP resources are described in Terraform — including the pieces originally created via the console, which have been **imported** into the state:
@@ -338,8 +378,10 @@ All GCP resources are described in Terraform — including the pieces originally
 |---|---|
 | GKE Standard cluster + node pool | zonal, Workload Identity, Spot VMs, `ignore_changes` on Google-managed cosmetic blocks |
 | Cloud SQL MySQL 8.0 instance + database + user | private IP, no backups (lab), `activation_policy` parameterised |
-| Secret Manager (2 secret containers, values managed out-of-band) | |
+| Secret Manager (3 secret containers, values managed out-of-band) | `wordpress-db`, `wordpress-admin`, `grafana-admin` |
 | GSA `eso-sa` + project IAM binding + Workload Identity binding | Least-privilege: only `roles/secretmanager.secretAccessor` |
+| GCS bucket `webservice-devops-velero-backups` | `force_destroy = false` — a destroy never takes the backups with it |
+| GSA `velero-sa` + 3 IAM bindings | `storage.objectAdmin` scoped to the bucket, Workload Identity, `serviceAccountTokenCreator` on itself |
 
 `terraform plan` runs clean: **no destroy, no add**. Code is the map of production.
 
