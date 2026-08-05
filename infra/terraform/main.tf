@@ -226,3 +226,57 @@ resource "google_service_account_iam_member" "eso_workload_identity" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-secrets/external-secrets]"
 }
+
+# ----------------------
+# Observabilité — secret Grafana (conteneur seulement, valeur hors state)
+# ----------------------
+resource "google_secret_manager_secret" "grafana_admin_password" {
+  secret_id = "grafana-admin-password"
+  project   = var.project_id
+
+  replication {
+    auto {}
+  }
+}
+
+# ----------------------
+# Backup Velero — bucket GCS + GSA + IAM (Workload Identity)
+# Créés via gcloud lors du chapitre observabilité/backup, importés ensuite.
+# ----------------------
+resource "google_storage_bucket" "velero_backups" {
+  name     = "webservice-devops-velero-backups"
+  location = "EUROPE-WEST1"
+  project  = var.project_id
+
+  # Pas de force_destroy : un destroy ne doit JAMAIS emporter les backups
+  force_destroy = false
+}
+
+resource "google_service_account" "velero" {
+  account_id   = "velero-sa"
+  display_name = "Velero backup"
+  project      = var.project_id
+}
+
+# Droit d'écriture/lecture sur LE bucket uniquement (moindre privilège —
+# pas de rôle projet contrairement à eso-sa qui doit lire tous les secrets)
+resource "google_storage_bucket_iam_member" "velero_object_admin" {
+  bucket = google_storage_bucket.velero_backups.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.velero.email}"
+}
+
+# Le KSA velero/velero peut AGIR COMME le GSA velero-sa (Workload Identity)
+resource "google_service_account_iam_member" "velero_workload_identity" {
+  service_account_id = google_service_account.velero.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[velero/velero]"
+}
+
+# Le GSA peut signer en son propre nom (signBlob) — exigé par le plugin GCP
+# de Velero en mode sans clé (config.serviceAccount du BackupStorageLocation)
+resource "google_service_account_iam_member" "velero_token_creator" {
+  service_account_id = google_service_account.velero.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.velero.email}"
+}
