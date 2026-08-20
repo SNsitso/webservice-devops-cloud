@@ -1,0 +1,54 @@
+# =====================
+# APPLICATION ARGOCD — INGRESS-NGINX (GKE)
+# UN SEUL LoadBalancer pour tous les sites (remplace les 2 LB des Services
+# WordPress, passés en ClusterIP) : routage par hostname + terminaison TLS.
+# Même contrôleur qu'en local — parité hybride.
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    targetRevision: 4.12.1
+    helm:
+      values: |
+        controller:
+          replicaCount: 1
+          service:
+            type: LoadBalancer   # LE point d'entrée public unique
+          # Requests rabotées : nœuds e2 quasi saturés en réservation CPU
+          # (leçon du chapitre observabilité — c'est une réservation, pas
+          # un plafond : pas de limit CPU, le contrôleur burste au besoin)
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          # Le webhook d'admission valide les objets Ingress à leur création
+          # (images registry.k8s.io — pas de piège Bitnami ici)
+          admissionWebhooks:
+            enabled: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      selfHeal: true
+      prune: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s

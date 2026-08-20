@@ -1,0 +1,32 @@
+# =====================
+# APPLICATION ARGOCD — TLS CONFIG (GKE)
+# Surveille le dossier gitops/gke/tls/ (ClusterIssuer Let's Encrypt).
+# Séparé de l'app cert-manager : les CRDs doivent exister avant le
+# ClusterIssuer — le retry d'ArgoCD absorbe l'ordre d'arrivée.
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tls-config
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://gitlab.com/SNsitso/webservice-devops-cloud.git
+    targetRevision: main
+    path: appli/gitops/gke/tls
+
+  destination:
+    server: https://kubernetes.default.svc
+
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s

@@ -1,0 +1,21 @@
+# =====================
+# CLUSTER ISSUER — Let's Encrypt production
+# La "configuration ACME" de cert-manager : qui demande les certificats,
+# et comment prouver qu'on contrôle le domaine (challenge HTTP-01 servi
+# par ingress-nginx). Ressource cluster-wide, une seule pour tous les ns.
+# =====================
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: serge.sitsofe@gmail.com
+    # Clé privée du COMPTE ACME (pas des certificats) — créée par cert-manager
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

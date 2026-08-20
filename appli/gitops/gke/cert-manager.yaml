@@ -1,0 +1,62 @@
+# =====================
+# APPLICATION ARGOCD — CERT-MANAGER (GKE)
+# Émission et renouvellement AUTOMATIQUES des certificats TLS Let's Encrypt.
+# Le ClusterIssuer (la "config" ACME) est géré à part : gitops/gke/tls/
+# (il dépend des CRDs installées par ce chart).
+# =====================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.17.2
+    helm:
+      values: |
+        # Depuis v1.15 : crds.enabled remplace installCRDs
+        crds:
+          enabled: true
+
+        # 3 petits pods (controller, webhook, cainjector) — requests minimales
+        resources:
+          requests:
+            cpu: 10m
+            memory: 48Mi
+          limits:
+            memory: 128Mi
+        webhook:
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+        cainjector:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 48Mi
+            limits:
+              memory: 128Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      selfHeal: true
+      prune: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
