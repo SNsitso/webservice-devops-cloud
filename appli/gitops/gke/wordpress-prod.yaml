@@ -22,6 +22,11 @@ spec:
       valueFiles:
         - values.yaml
         - values-gke.yaml
+      # Explicite (même valeur que le défaut de values-gke.yaml) : le
+      # hostname de chaque environnement se lit dans son propre contrat.
+      parameters:
+        - name: ingress.host
+          value: prod.wsdevops.cloudns.ch
 
   destination:
     server: https://kubernetes.default.svc

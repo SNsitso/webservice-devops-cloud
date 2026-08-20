@@ -19,12 +19,16 @@ wordpress:
     image: bitnami/wordpress@sha256:4a70606af740f23f5cd8ac86b13e66adffca022526953c68de1307418a1186a8
     replicaCount: 1
   service:
-    type: LoadBalancer
+    # ClusterIP (et non LoadBalancer) : le trafic public entre par
+    # ingress-nginx — UN seul LoadBalancer GCP pour tous les sites, qui
+    # termine le TLS et route par nom d'hôte. Les pods WordPress ne sont
+    # plus exposés directement sur Internet.
+    type: ClusterIP
     port: 80
     targetPort: 8080
 
 service:
-  type: LoadBalancer
+  type: ClusterIP
   port: 80
   targetPort: 8080
   annotations: {}
@@ -52,7 +56,25 @@ env:
   WORDPRESS_TABLE_PREFIX: wp_
 
 ingress:
-  enabled: false
+  enabled: true
+  className: nginx
+  # Hôte par défaut = prod ; l'Application ArgoCD staging le surcharge via
+  # helm.parameters (un seul chart, un hostname par environnement).
+  host: prod.wsdevops.cloudns.ch
+  path: /
+  annotations:
+    # LA ligne qui déclenche tout : cert-manager voit cette annotation,
+    # demande un certificat à Let's Encrypt pour les hôtes du bloc tls,
+    # résout le challenge HTTP-01, et renouvelle automatiquement.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Redirige http:// vers https:// (comportement par défaut de nginx
+    # dès qu'un TLS existe, rendu explicite ici)
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  tls:
+    enabled: true
+    # Secret créé et rempli PAR cert-manager (pas par nous) dans le
+    # namespace de l'Ingress — contient le certificat et sa clé privée.
+    secretName: wordpress-tls
 
 resources:
   limits:

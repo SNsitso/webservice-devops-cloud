@@ -22,6 +22,10 @@ spec:
       valueFiles:
         - values.yaml
         - values-gke.yaml
+      # Le hostname est LA seule différence de rendu entre staging et prod
+      parameters:
+        - name: ingress.host
+          value: staging.wsdevops.cloudns.ch
 
   destination:
     server: https://kubernetes.default.svc
