@@ -10,8 +10,9 @@
 ![Prometheus](https://img.shields.io/badge/Prometheus-kube--prometheus--stack-E6522C?logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-dashboards-F46800?logo=grafana&logoColor=white)
 ![Velero](https://img.shields.io/badge/Velero-daily_backups_→_GCS-42B3E5)
+![TLS](https://img.shields.io/badge/TLS-Let's_Encrypt_auto--renewed-003A70)
 
-Production-grade WordPress deployed on two Kubernetes environments — a local kubeadm cluster (Vagrant/VirtualBox) and a GKE Standard cluster on GCP — both managed **in GitOps** with ArgoCD. Infrastructure fully described in Terraform, secrets federated end-to-end (Workload Identity + External Secrets on GKE, Sealed Secrets locally), CI GitLab with three blocking Trivy scans and **no cluster access from the runner**. Full observability with **Prometheus + Grafana**, and **daily Velero backups** to GCS with a **proven restore path**.
+Production-grade WordPress deployed on two Kubernetes environments — a local kubeadm cluster (Vagrant/VirtualBox) and a GKE Standard cluster on GCP — both managed **in GitOps** with ArgoCD. Infrastructure fully described in Terraform, secrets federated end-to-end (Workload Identity + External Secrets on GKE, Sealed Secrets locally), CI GitLab with three blocking Trivy scans and **no cluster access from the runner**. Full observability with **Prometheus + Grafana**, **daily Velero backups** to GCS with a **proven restore path**, and **end-to-end HTTPS** through ingress-nginx with auto-renewed Let's Encrypt certificates.
 
 ---
 
@@ -80,8 +81,10 @@ GCP project: webservice-devops
 │   ├── Workload Identity enabled
 │   ├── namespace argocd            → ArgoCD (5 pods)
 │   ├── namespace external-secrets  → External Secrets Operator
-│   ├── namespace staging           → WordPress (LoadBalancer)
-│   ├── namespace wordpress         → WordPress (LoadBalancer)
+│   ├── namespace ingress-nginx     → single public entry point (L7, TLS termination)
+│   ├── namespace cert-manager      → Let's Encrypt certificates, auto-renewed
+│   ├── namespace staging           → WordPress (ClusterIP, behind Ingress)
+│   ├── namespace wordpress         → WordPress (ClusterIP, behind Ingress)
 │   ├── namespace monitoring        → kube-prometheus-stack (Prometheus, Grafana, Alertmanager)
 │   └── namespace velero            → Velero + node-agent DaemonSet (File System Backup)
 │
@@ -145,8 +148,9 @@ Host machine (VirtualBox)
 | Database — local | MySQL in-cluster (Deployment + PVC) |
 | Local provisioning | Vagrant + VirtualBox + shell scripts |
 | Networking | GCP VPC (peering to Cloud SQL) / Calico + MetalLB (local) |
-| Load balancing | GKE LoadBalancer (cloud) / MetalLB (local) |
-| Ingress | GKE Service (cloud) / Ingress-Nginx (local) |
+| Load balancing | Single GKE LoadBalancer fronting ingress-nginx (cloud) / MetalLB (local) |
+| Ingress | **ingress-nginx** — host-based routing, one LB for all sites (both environments) |
+| **TLS** | **cert-manager + Let's Encrypt** (HTTP-01), auto-renewed 30 days before expiry, HTTP→HTTPS redirect + HSTS |
 
 ---
 
@@ -180,6 +184,7 @@ CI runner                                Cluster
 | Rollback via `git revert` | Effective in **~2-3 min** |
 | **Critical CVE published for the pinned image** (real event, caught by the blocking Trivy scan) | Patched on both environments with a **one-line digest bump** — no cluster access needed |
 | Full namespace loss (simulated) | **Velero restore in ~2 min**, site verified live |
+| TLS certificate expiry | **Non-event** — cert-manager renews at T-30 days automatically |
 
 ---
 
@@ -213,6 +218,10 @@ wsdevops-Cloud/
 │           ├── wordpress-prod.yaml     # manual sync (human gate for prod)
 │           ├── monitoring.yaml         # kube-prometheus-stack (ServerSideApply for >262KB CRDs)
 │           ├── velero.yaml             # Velero + GCP plugin, FSB, daily schedule
+│           ├── ingress-nginx.yaml      # single public LoadBalancer, host-based routing
+│           ├── cert-manager.yaml       # Let's Encrypt certificate lifecycle
+│           ├── tls-config.yaml         # watches tls/ (split: CRDs must exist first)
+│           ├── tls/cluster-issuer.yaml # ACME issuer, HTTP-01 solver
 │           ├── secrets-app.yaml
 │           └── secrets/
 │               ├── cluster-secret-store.yaml     # GCP Secret Manager backend
@@ -340,6 +349,13 @@ Duration: ~3-5 minutes per push. Zero credentials to any cluster.
 
 - Three blocking Trivy scans on every push — no way to merge a critical CVE, a K8s misconfiguration, or a leaked secret
 - The runner has no cluster or GCP credentials for the validation jobs
+
+### Transport (TLS)
+
+- **HTTPS on both public sites**, certificates issued by Let's Encrypt through cert-manager (ACME HTTP-01) and **renewed automatically 30 days before expiry** — no human step, no calendar reminder
+- `308` redirect from HTTP to HTTPS and **HSTS** (`max-age=31536000; includeSubDomains`)
+- WordPress Services are `ClusterIP`: pods are never exposed directly to the internet, all traffic goes through a single controlled entry point
+- Everything else already spoke TLS: ArgoCD UI, ArgoCD→GitLab, ESO→Secret Manager, Velero→GCS, kubectl→API server
 
 ### Infrastructure
 
