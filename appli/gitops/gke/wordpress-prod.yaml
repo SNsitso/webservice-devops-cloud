@@ -26,7 +26,7 @@ spec:
       # hostname de chaque environnement se lit dans son propre contrat.
       parameters:
         - name: ingress.host
-          value: prod.wsdevops.cloudns.ch
+          value: prod.wsdevops.ip-ddns.com
 
   destination:
     server: https://kubernetes.default.svc

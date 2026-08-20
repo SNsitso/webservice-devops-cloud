@@ -60,7 +60,7 @@ ingress:
   className: nginx
   # Hôte par défaut = prod ; l'Application ArgoCD staging le surcharge via
   # helm.parameters (un seul chart, un hostname par environnement).
-  host: prod.wsdevops.cloudns.ch
+  host: prod.wsdevops.ip-ddns.com
   path: /
   annotations:
     # LA ligne qui déclenche tout : cert-manager voit cette annotation,

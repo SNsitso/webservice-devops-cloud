@@ -25,7 +25,7 @@ spec:
       # Le hostname est LA seule différence de rendu entre staging et prod
       parameters:
         - name: ingress.host
-          value: staging.wsdevops.cloudns.ch
+          value: staging.wsdevops.ip-ddns.com
 
   destination:
     server: https://kubernetes.default.svc
