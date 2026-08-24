@@ -78,6 +78,10 @@ spec:
           enabled: false
         kubeProxy:
           enabled: false
+        # GKE utilise kube-dns, pas CoreDNS : la cible du chart reste
+        # définitivement DOWN (0/2 up) si on la laisse activée.
+        coreDns:
+          enabled: false
 
         prometheusOperator:
           resources:
