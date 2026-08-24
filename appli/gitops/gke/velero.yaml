@@ -78,15 +78,21 @@ spec:
             requests:
               cpu: 10m
               memory: 128Mi
+            # 512Mi : le node-agent déplace réellement les données (kopia).
+            # Une limite trop basse le fait tuer (OOMKilled) en plein backup.
             limits:
-              memory: 256Mi
+              memory: 512Mi
 
+        # Serveur Velero : la REQUEST reste basse (réservation scheduler), mais
+        # la LIMIT doit être généreuse — un backup indexe les objets et pilote
+        # les transferts. Constaté le 2026-08-24 : OOMKilled (exit 137) à
+        # 256Mi en plein backup, qui a échoué à 16/53 objets.
         resources:
           requests:
             cpu: 50m
             memory: 128Mi
           limits:
-            memory: 256Mi
+            memory: 512Mi
 
         # Métriques Prometheus (visible dans Grafana)
         metrics:
