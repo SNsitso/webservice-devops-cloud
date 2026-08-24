@@ -4,7 +4,7 @@ wordpress:
         # le securityContext du template (runAsUser 1001, port 8080)
         # est spécifique aux images Bitnami. wordpress:4.8-apache
         # (root, port 80) crashait avec ces contraintes.
-        image: bitnami/wordpress@sha256:4a70606af740f23f5cd8ac86b13e66adffca022526953c68de1307418a1186a8
+        image: bitnami/wordpress@sha256:ad795d05958d5b848b8afb95e6e968033d09f2b8b042f6a8ecd1963fc4a504dd
         replicaCount: 1
     service:
         type: ClusterIP
